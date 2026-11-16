@@ -10,6 +10,18 @@ import { answerOffline, askOpenRouter, buildContext } from '../src/lib/server/ch
 import { openDb } from '../src/lib/server/db';
 import { createRuntime, setRuntimeForTesting } from '../src/lib/server/runtime';
 import { rank } from '../src/lib/search';
+import {
+  buildByDateMap,
+  buildMonthGrid,
+  buildWeekDays,
+  buildWeekSpans,
+  getMonthTitle,
+  getWeekRange,
+  getWeekStart,
+  getWeekTitle,
+  shiftMonthStr,
+  shiftWeekStr
+} from '../src/lib/calendar';
 
 import { handle } from '../src/hooks.server';
 import { load as layoutLoad } from '../src/routes/+layout.server';
@@ -695,3 +707,111 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
     }
   });
 });
+
+// ---- Calendar week & month helpers ----
+describe('Calendar week and month helpers', () => {
+  const dash = buildDashboard(generateMock('2026-11-16'), '2026-11-16');
+  const byDate = buildByDateMap(dash.events);
+
+  test('week range, shifting, and title formatting across month and year boundaries', () => {
+    expect(getWeekStart('2026-11-16')).toBe('2026-11-15');
+    expect(getWeekStart('2026-11-15')).toBe('2026-11-15');
+    expect(getWeekStart('2026-11-21')).toBe('2026-11-15');
+    expect(getWeekRange('2026-11-16')).toEqual({ start: '2026-11-15', end: '2026-11-21' });
+
+    expect(getWeekTitle('2026-11-15')).toBe('15 \u2013 21 Nov 2026');
+    expect(getWeekTitle('2026-11-29')).toBe('29 Nov \u2013 5 Dec 2026');
+    expect(getWeekTitle('2026-12-27')).toBe('27 Dec 2026 \u2013 2 Jan 2027');
+
+    expect(shiftWeekStr('2026-11-15', -1)).toBe('2026-11-08');
+    expect(shiftWeekStr('2026-11-15', 1)).toBe('2026-11-22');
+    expect(shiftWeekStr('2026-11-29', 1)).toBe('2026-12-06');
+  });
+
+  test('buildWeekDays generates 7 Sun-Sat days with today, selected, and event day progress', () => {
+    const days = buildWeekDays('2026-11-15', '2026-11-16', '2026-11-20', byDate);
+    expect(days).toHaveLength(7);
+    expect(days.map((d) => d.key)).toEqual([
+      '2026-11-15',
+      '2026-11-16',
+      '2026-11-17',
+      '2026-11-18',
+      '2026-11-19',
+      '2026-11-20',
+      '2026-11-21'
+    ]);
+    expect(days.map((d) => d.dowLabel)).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
+    expect(days[1].today).toBe(true);
+    expect(days[0].today).toBe(false);
+    expect(days[5].selected).toBe(true);
+
+    // On Fri 2026-11-20, AC-014, AC-015, AC-016, and AC-017 are all active
+    const friIds = days[5].evs.map((e) => e.event_id);
+    expect(friIds).toEqual(['AC-014', 'AC-015', 'AC-016', 'AC-017']);
+    const ac016 = days[5].evs.find((e) => e.event_id === 'AC-016')!;
+    expect(ac016.dayNo).toBe(3);
+    expect(ac016.dayCount).toBe(3);
+  });
+
+  test('buildWeekSpans clips multi-day events across week boundaries and packs non-overlapping lanes', () => {
+    const spans = buildWeekSpans('2026-11-15', dash.events);
+    expect(spans.map((s) => s.event.event_id)).toEqual(['AC-014', 'AC-015', 'AC-016', 'AC-017']);
+
+    const s14 = spans.find((s) => s.event.event_id === 'AC-014')!;
+    expect(s14.startCol).toBe(1);
+    expect(s14.spanCols).toBe(7);
+    expect(s14.continuesBefore).toBe(true);
+    expect(s14.continuesAfter).toBe(true);
+    expect(s14.dayRangeText).toBe('Day 28\u201334 of 47');
+
+    const s16 = spans.find((s) => s.event.event_id === 'AC-016')!;
+    expect(s16.startCol).toBe(4); // Wed Nov 18
+    expect(s16.spanCols).toBe(3); // Wed..Fri
+    expect(s16.continuesBefore).toBe(false);
+    expect(s16.continuesAfter).toBe(false);
+    expect(s16.dayRangeText).toBe('Day 1\u20133 of 3');
+
+    const s17 = spans.find((s) => s.event.event_id === 'AC-017')!;
+    expect(s17.startCol).toBe(6); // Fri Nov 20
+    expect(s17.spanCols).toBe(2); // Fri..Sat
+    expect(s17.lane).not.toBe(s16.lane); // overlaps AC-016 on col 6
+
+    // Single-day event AC-020 (2027-01-30) should appear in day agenda, not multi-day spans
+    const janWeekSpans = buildWeekSpans('2027-01-24', dash.events);
+    expect(janWeekSpans).toHaveLength(0);
+    const janWeekDays = buildWeekDays('2027-01-24', '2026-11-16', null, byDate);
+    expect(janWeekDays[6].evs.map((e) => e.event_id)).toEqual(['AC-020']);
+
+    // Non-overlapping multi-day events in the same week share lane 0
+    const base = dash.events[0];
+    const packed = buildWeekSpans('2026-11-15', [
+      { ...base, event_id: 'T1', title: 'Early', date: '2026-11-15', end_date: '2026-11-16' },
+      { ...base, event_id: 'T2', title: 'Late', date: '2026-11-19', end_date: '2026-11-21' }
+    ]);
+    expect(packed[0].lane).toBe(0);
+    expect(packed[1].lane).toBe(0);
+  });
+
+  test('month title, shifting, and grid generation handle 5-row and 6-row months', () => {
+    expect(getMonthTitle('2026-11')).toBe('November 2026');
+    expect(shiftMonthStr('2026-12', 1)).toBe('2027-01');
+    expect(shiftMonthStr('2026-01', -1)).toBe('2025-12');
+
+    // Nov 2026 starts on Sunday Nov 1 -> 35 cells
+    const novCells = buildMonthGrid('2026-11', '2026-11-16', '2026-11-20', byDate);
+    expect(novCells).toHaveLength(35);
+    expect(novCells[0].key).toBe('2026-11-01');
+    expect(novCells[15].today).toBe(true);
+    expect(novCells[19].selected).toBe(true);
+    expect(novCells[19].evs.map((e) => e.event_id)).toEqual(['AC-014', 'AC-015', 'AC-016', 'AC-017']);
+    expect(novCells[30].key).toBe('2026-12-01');
+    expect(novCells[30].other).toBe(true);
+
+    // Aug 2026 starts on Saturday Aug 1 -> 42 cells
+    const augCells = buildMonthGrid('2026-08', '2026-11-16', null, byDate);
+    expect(augCells).toHaveLength(42);
+    expect(augCells[0].key).toBe('2026-07-26');
+    expect(augCells[0].other).toBe(true);
+  });
+});
+
