@@ -1,11 +1,17 @@
-// Data source: ONE batched Google Sheets API call for all tabs, cached for SHEET_CACHE_SECONDS
-// with in-flight de-duplication. Falls back to the last good copy if Google errors, and to
-// normalized Mock-Data CSVs when no key is configured.
+// Data source: ONE batched Google Sheets API call for all tabs (or keyless public gviz CSV export),
+// cached for SHEET_CACHE_SECONDS with in-flight de-duplication. Falls back to the last good copy
+// if Google errors, and to normalized Mock-Data CSVs when configured in mock mode.
 import { generateMock } from './mock';
 import { normalizeDate, todayInTz } from './dates';
 
 export const TABS = ['Members', 'Events', 'Attendance', 'Budget'] as const;
 export type TabName = (typeof TABS)[number];
+
+export interface SheetConfig {
+  mode: 'mock' | 'google';
+  sheetId: string;
+  sheetTitle?: string;
+}
 
 export interface MemberRecord {
   member_id: string;
@@ -64,6 +70,65 @@ export interface SheetData {
 }
 
 export type RawRow = Record<string, unknown>;
+
+export function extractSheetId(input: string): string {
+  const trimmed = String(input || '').trim();
+  if (!trimmed) return '';
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed)) return trimmed;
+  return '';
+}
+
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+
+  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field);
+      field = '';
+    } else if (ch === '\r') {
+      if (src[i + 1] === '\n') i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += ch;
+    }
+  }
+
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows.filter((r) => r.some((cell) => cell.trim() !== ''));
+}
 
 const num = (v: unknown): number => {
   const n = Number(String(v ?? '').replace(/[,฿\s]/g, ''));
@@ -213,6 +278,13 @@ export const KEY_FIELD: Record<TabName, string> = {
   Budget: 'expense_id'
 };
 
+const EXPECTED_TAB_HEADERS: Record<TabName, string[]> = {
+  Members: ['member_id', 'student_id'],
+  Events: ['event_id', 'project_id'],
+  Attendance: ['attendance_id', 'event_id', 'project_id'],
+  Budget: ['expense_id', 'tx_id']
+};
+
 export function rowsToObjects(values: unknown[][]): RawRow[] {
   if (!Array.isArray(values) || values.length < 2) return [];
   const header = values[0].map((h) => str(h).toLowerCase());
@@ -242,6 +314,23 @@ export function parseBatchResponse(json: { valueRanges?: BatchValueRange[] }): S
   return data;
 }
 
+export function parseCsvTab(csvText: string, tab: TabName): unknown[] {
+  const matrix = parseCsv(csvText);
+  if (!matrix.length) {
+    throw new Error(`Sheet tab "${tab}" is empty`);
+  }
+  const header = matrix[0].map((h) => str(h).toLowerCase());
+  const expected = EXPECTED_TAB_HEADERS[tab];
+  if (!expected.some((col) => header.includes(col))) {
+    throw new Error(`Sheet tab "${tab}" was not found or is missing required columns (${expected.join(' / ')})`);
+  }
+  const normalizer = NORMALIZERS[tab] as unknown as (r: RawRow, idx: number) => Record<string, unknown>;
+  const key = KEY_FIELD[tab];
+  return rowsToObjects(matrix)
+    .map((r, i) => normalizer(r, i))
+    .filter((r) => Boolean(r[key]));
+}
+
 export interface SourceResult {
   data: SheetData;
   source: 'mock' | 'google';
@@ -257,26 +346,93 @@ export interface SourceOptions {
 }
 
 export function createSource({ env = process.env, fetchImpl = fetch, now = () => Date.now() }: SourceOptions = {}) {
-  const key = env.GOOGLE_API_KEY;
-  const sheetId = env.GOOGLE_SHEET_ID;
+  const key = (env.GOOGLE_API_KEY || '').trim();
   const ttl = Math.max(0, Number(env.SHEET_CACHE_SECONDS ?? 30)) * 1000;
   const tz = env.TZ_NAME || 'Asia/Bangkok';
+
+  let config: SheetConfig = {
+    mode: (env.GOOGLE_SHEET_ID || '').trim() ? 'google' : 'mock',
+    sheetId: (env.GOOGLE_SHEET_ID || '').trim(),
+    sheetTitle: env.GOOGLE_SHEET_TITLE?.trim() || undefined
+  };
+
   let cache: SourceResult | null = null;
   let inflight: Promise<SourceResult> | null = null;
 
-  async function fetchGoogle(): Promise<SheetData> {
+  function getConfig(): SheetConfig {
+    return { ...config };
+  }
+
+  function setConfig(next: SheetConfig) {
+    config = {
+      mode: next.mode === 'google' && next.sheetId.trim() ? 'google' : 'mock',
+      sheetId: next.mode === 'google' ? next.sheetId.trim() : '',
+      sheetTitle: next.sheetTitle?.trim() || undefined
+    };
+    cache = null;
+    inflight = null;
+  }
+
+  async function fetchGoogleBatch(sheetId: string): Promise<SheetData> {
     const params = TABS.map((t) => `ranges=${encodeURIComponent(t)}`).join('&');
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId!)}/values:batchGet?${params}&key=${encodeURIComponent(key!)}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values:batchGet?${params}&key=${encodeURIComponent(key)}`;
     const res = await fetchImpl(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) throw new Error(`Google Sheets API responded ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(`Google Sheets API responded ${res.status}`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
     return parseBatchResponse((await res.json()) as { valueRanges?: BatchValueRange[] });
   }
 
+  async function fetchGoogleCsv(sheetId: string): Promise<SheetData> {
+    const entries = await Promise.all(
+      TABS.map(async (tab) => {
+        const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
+        const res = await fetchImpl(url, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) {
+          throw new Error(`Google Sheet CSV export responded ${res.status} for tab "${tab}"`);
+        }
+        const ct = res.headers.get('content-type') || '';
+        const text = await res.text();
+        if (ct.includes('text/html') || /^\s*(<!doctype|<html)/i.test(text)) {
+          throw new Error(
+            'Google Sheet is not publicly accessible. Share it as "Anyone with the link can view".'
+          );
+        }
+        return [tab, parseCsvTab(text, tab)] as const;
+      })
+    );
+    const data = {} as SheetData;
+    for (const [tab, rows] of entries) {
+      (data as unknown as Record<TabName, unknown[]>)[tab] = rows;
+    }
+    return data;
+  }
+
+  async function fetchGoogleForId(sheetId: string): Promise<SheetData> {
+    if (key) {
+      try {
+        return await fetchGoogleBatch(sheetId);
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        if (status !== 400 && status !== 403) throw err;
+        // Fall back to keyless public CSV export when API key lacks access or is invalid
+        return await fetchGoogleCsv(sheetId);
+      }
+    }
+    return await fetchGoogleCsv(sheetId);
+  }
+
+  async function validateGoogleSheet(sheetId: string): Promise<SheetData> {
+    return fetchGoogleForId(sheetId);
+  }
+
   async function load(): Promise<Omit<SourceResult, 'fetchedAt'>> {
-    if (!key || !sheetId) {
+    if (config.mode !== 'google' || !config.sheetId) {
       return { data: generateMock(todayInTz(tz, new Date(now()))), source: 'mock', stale: false };
     }
-    return { data: await fetchGoogle(), source: 'google', stale: false };
+    return { data: await fetchGoogleForId(config.sheetId), source: 'google', stale: false };
   }
 
   async function getData({ force = false } = {}): Promise<SourceResult> {
@@ -301,5 +457,13 @@ export function createSource({ env = process.env, fetchImpl = fetch, now = () =>
     return inflight;
   }
 
-  return { getData, mode: key && sheetId ? ('google' as const) : ('mock' as const) };
+  return {
+    getData,
+    getConfig,
+    setConfig,
+    validateGoogleSheet,
+    get mode(): 'mock' | 'google' {
+      return config.mode === 'google' && config.sheetId ? 'google' : 'mock';
+    }
+  };
 }

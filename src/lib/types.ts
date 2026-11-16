@@ -100,6 +100,9 @@ export interface ProjectSummary {
   expenses: Array<{ category: string; amount: number; date: string }>;
 }
 
+export type DbBackend = 'supabase' | 'sqlite';
+export type SupabaseStatus = 'connected' | 'schema_missing' | 'disabled';
+
 export interface DashboardPayload {
   today: string;
   metrics: {
@@ -125,5 +128,9 @@ export interface DashboardPayload {
     source: 'mock' | 'google';
     fetchedAt: number;
     stale: boolean;
+    sheetId?: string;
+    sheetTitle?: string;
+    dbBackend?: DbBackend;
+    supabaseStatus?: SupabaseStatus;
   };
 }

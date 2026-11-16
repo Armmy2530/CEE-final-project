@@ -7,7 +7,8 @@ import type { RequestEvent } from '@sveltejs/kit';
 
 import { buildAlerts } from '../src/lib/server/alerts';
 import { normalizeDate, daysBetween, addDays } from '../src/lib/server/dates';
-import { parseBatchResponse, createSource } from '../src/lib/server/sheets';
+import { parseBatchResponse, createSource, extractSheetId } from '../src/lib/server/sheets';
+import { createSupabaseClient } from '../src/lib/server/supabase';
 import { buildDashboard } from '../src/lib/server/dashboard';
 import { generateMock, parseCsv, resolveSampleSheetsDir } from '../src/lib/server/mock';
 import { answerOffline, askOpenRouter, buildContext } from '../src/lib/server/chat';
@@ -38,6 +39,9 @@ import * as meRoute from '../src/routes/api/me/+server';
 import * as meThemeRoute from '../src/routes/api/me/theme/+server';
 import * as dashRoute from '../src/routes/api/dashboard/+server';
 import * as chatRoute from '../src/routes/api/chat/+server';
+import * as sheetsConfigRoute from '../src/routes/api/sheets/config/+server';
+import * as sheetsDriveRoute from '../src/routes/api/sheets/drive/+server';
+import * as sheetsExportCsvRoute from '../src/routes/api/sheets/export-csv/+server';
 import * as adminUsersRoute from '../src/routes/api/admin/users/+server';
 import * as adminUserIdRoute from '../src/routes/api/admin/users/[id]/+server';
 import * as adminUserResetRoute from '../src/routes/api/admin/users/[id]/reset/+server';
@@ -422,10 +426,11 @@ describe('Project search and offline chat', () => {
 // ---- SvelteKit API Integration Tests ----
 function createHarness(
   envOverrides: Record<string, string | undefined> = {},
-  source?: ReturnType<typeof createSource>
+  source?: NonNullable<Parameters<typeof createRuntime>[0]>['source'],
+  supabase?: NonNullable<Parameters<typeof createRuntime>[0]>['supabase']
 ) {
   const db = openDb(':memory:');
-  const rt = createRuntime({ env: { TZ_NAME: 'Asia/Bangkok', ...envOverrides }, db, source });
+  const rt = createRuntime({ env: { TZ_NAME: 'Asia/Bangkok', ...envOverrides }, db, source, supabase });
   setRuntimeForTesting(rt);
 
   const routes: Array<{
@@ -442,6 +447,9 @@ function createHarness(
     { pattern: /^\/api\/me\/theme$/, handlers: meThemeRoute as never },
     { pattern: /^\/api\/dashboard$/, handlers: dashRoute as never },
     { pattern: /^\/api\/chat$/, handlers: chatRoute as never },
+    { pattern: /^\/api\/sheets\/config$/, handlers: sheetsConfigRoute as never },
+    { pattern: /^\/api\/sheets\/drive$/, handlers: sheetsDriveRoute as never },
+    { pattern: /^\/api\/sheets\/export-csv$/, handlers: sheetsExportCsvRoute as never },
     { pattern: /^\/api\/admin\/users$/, handlers: adminUsersRoute as never },
     { pattern: /^\/api\/admin\/users\/([^/]+)$/, handlers: adminUserIdRoute as never, paramNames: ['id'] },
     { pattern: /^\/api\/admin\/users\/([^/]+)\/reset$/, handlers: adminUserResetRoute as never, paramNames: ['id'] }
@@ -999,6 +1007,258 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
       });
       expect(login2.status).toBe(200);
       expect(login2.body.user.member_id).toBe('MOCK-66-0002');
+    } finally {
+      close();
+    }
+  });
+});
+
+// ---- Google Sheets Dynamic Selector & Keyless gviz CSV Fallback ----
+describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
+  test('extractSheetId parses full Google Sheet URLs, raw IDs, and rejects invalid inputs', () => {
+    expect(
+      extractSheetId('https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0')
+    ).toBe('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms');
+    expect(extractSheetId('1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms')).toBe(
+      '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms'
+    );
+    expect(extractSheetId('short')).toBe('');
+    expect(extractSheetId('https://example.com/not-a-sheet')).toBe('');
+  });
+
+  test('createSource fetches keyless public gviz CSV tabs and rejects private HTML responses', async () => {
+    const csvTabs: Record<string, string> = {
+      Members: 'Member_ID,Full_Name,Department,Role\nMOCK-66-0001,Aiden Adams,Academic Affairs,President\n',
+      Events: 'Event_ID,Title,Date,End_Date,Location,Budget_Planned,Status\nEV-01,Workshop,2026-11-20,2026-11-20,Room 101,5000,Scheduled\n',
+      Attendance: 'Attendance_ID,Event_ID,Member_ID,Full_Name,Status,Participant_Type\nATT-1,EV-01,MOCK-66-0001,Aiden Adams,Present,Staff\n',
+      Budget: 'Expense_ID,Event_ID,Type,Category,Amount,Date\nTX-1,EV-01,Expense,Food,1200,2026-11-20\n'
+    };
+
+    const csvFetch = (async (url: string | URL | Request) => {
+      const u = new URL(String(url));
+      expect(u.pathname).toContain('/spreadsheets/d/1PubSheet1234567/gviz/tq');
+      expect(u.searchParams.get('tqx')).toBe('out:csv');
+      const sheet = u.searchParams.get('sheet') || '';
+      return new Response(csvTabs[sheet] || '', {
+        status: 200,
+        headers: { 'content-type': 'text/csv; charset=utf-8' }
+      });
+    }) as typeof fetch;
+
+    const src = createSource({
+      env: { GOOGLE_SHEET_ID: '1PubSheet1234567', SHEET_CACHE_SECONDS: '30' },
+      fetchImpl: csvFetch
+    });
+
+    const res = await src.getData();
+    expect(res.source).toBe('google');
+    expect(res.data.Members).toHaveLength(1);
+    expect(res.data.Events[0].title).toBe('Workshop');
+    expect(res.data.Budget[0].amount).toBe(1200);
+
+    // Private sheet returning HTML login page fails with helpful message
+    const htmlFetch = (async () =>
+      new Response('<!doctype html><html><body>Sign in</body></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' }
+      })) as unknown as typeof fetch;
+    const privateSrc = createSource({ env: {}, fetchImpl: htmlFetch });
+    await expect(privateSrc.validateGoogleSheet('1PrivateSheet1234')).rejects.toThrow(/publicly accessible/i);
+  });
+
+  test('POST /api/sheets/config switches between google (gviz CSV) and mock modes and persists config', async () => {
+    const csvTabs: Record<string, string> = {
+      Members: 'Member_ID,Full_Name,Department,Role\nMOCK-66-0001,Aiden Adams,Academic Affairs,President\n',
+      Events: 'Event_ID,Title,Date,End_Date,Location,Budget_Planned,Status\nEV-10,Robotics Talk,2026-11-25,2026-11-25,Hall,8000,Scheduled\n',
+      Attendance: 'Attendance_ID,Event_ID,Member_ID,Full_Name,Status,Participant_Type\nATT-10,EV-10,MOCK-66-0001,Aiden Adams,Present,Staff\n',
+      Budget: 'Expense_ID,Event_ID,Type,Category,Amount,Date\nTX-10,EV-10,Expense,Venue,2500,2026-11-25\n'
+    };
+
+    const gvizFetch = (async (url: string | URL | Request) => {
+      const sheet = new URL(String(url)).searchParams.get('sheet') || '';
+      return new Response(csvTabs[sheet] || '', {
+        status: 200,
+        headers: { 'content-type': 'text/csv; charset=utf-8' }
+      });
+    }) as typeof fetch;
+
+    const src = createSource({ env: {}, fetchImpl: gvizFetch });
+    const { call, close } = createHarness({}, src);
+    try {
+      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      expect(adm.status).toBe(200);
+
+      const cfg0 = await call('GET', '/api/sheets/config', undefined, adm.cookie);
+      expect(cfg0.status).toBe(200);
+      expect(cfg0.body.mode).toBe('mock');
+
+      // Switch to Google Sheet URL
+      const conn = await call(
+        'POST',
+        '/api/sheets/config',
+        {
+          mode: 'google',
+          sheetUrlOrId: 'https://docs.google.com/spreadsheets/d/1LiveClubSheet999/edit#gid=0',
+          sheetTitle: 'Club Live 2026'
+        },
+        adm.cookie
+      );
+      expect(conn.status).toBe(200);
+      expect(conn.body.config).toEqual({
+        mode: 'google',
+        sheetId: '1LiveClubSheet999',
+        sheetTitle: 'Club Live 2026'
+      });
+      expect(conn.body.summary).toEqual({ members: 1, events: 1, attendance: 1, budget: 1 });
+      expect(conn.body.recentSheets[0].sheetId).toBe('1LiveClubSheet999');
+
+      // Dashboard now serves Google Sheet data
+      const dashGoogle = await call('GET', '/api/dashboard', undefined, adm.cookie);
+      expect(dashGoogle.status).toBe(200);
+      expect(dashGoogle.body.meta.source).toBe('google');
+      expect(dashGoogle.body.meta.sheetId).toBe('1LiveClubSheet999');
+      expect(dashGoogle.body.events[0].title).toBe('Robotics Talk');
+
+      // Export CSV endpoint works for canonical tabs
+      const csvExp = await call('GET', '/api/sheets/export-csv?tab=Events', undefined, adm.cookie);
+      expect(csvExp.status).toBe(200);
+      expect(csvExp.headers.get('content-type')).toContain('text/csv');
+      expect(csvExp.text).toContain('AC-001');
+
+      // Drive endpoint returns recentSheets cleanly when no OAuth token is provided
+      const driveRes = await call('GET', '/api/sheets/drive', undefined, adm.cookie);
+      expect(driveRes.status).toBe(200);
+      expect(driveRes.body.hasDriveAccess).toBe(false);
+      expect(driveRes.body.recentSheets[0].sheetId).toBe('1LiveClubSheet999');
+
+      // Switch back to built-in Mock-Data
+      const back = await call('POST', '/api/sheets/config', { mode: 'mock' }, adm.cookie);
+      expect(back.status).toBe(200);
+      expect(back.body.config.mode).toBe('mock');
+      expect(back.body.summary.members).toBe(67);
+    } finally {
+      close();
+    }
+  });
+});
+
+// ---- SQLite Settings & Supabase (public-cee-v2) Client ----
+describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
+  test('db.getSetting and db.setSetting persist and overwrite key-value pairs', () => {
+    const db = openDb(':memory:');
+    try {
+      expect(db.getSetting('sheet_config')).toBeNull();
+      db.setSetting('sheet_config', '{"mode":"mock"}', 1000);
+      expect(db.getSetting('sheet_config')).toBe('{"mode":"mock"}');
+      expect(db.getSettingRow('sheet_config')?.updated_at).toBe(1000);
+
+      db.setSetting('sheet_config', '{"mode":"google","sheetId":"abc"}', 2000);
+      expect(db.getSetting('sheet_config')).toBe('{"mode":"google","sheetId":"abc"}');
+      expect(db.listSettings()).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('createSupabaseClient sends Accept-Profile/Content-Profile: public-cee-v2 headers and falls back gracefully on PGRST106', async () => {
+    const calls: Array<{ url: string; method: string; headers: Record<string, string> }> = [];
+    const okFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const hdrs: Record<string, string> = {};
+      new Headers(init?.headers).forEach((v, k) => {
+        hdrs[k.toLowerCase()] = v;
+      });
+      calls.push({ url: String(url), method: init?.method || 'GET', headers: hdrs });
+      if ((init?.method || 'GET') === 'GET') {
+        return new Response(JSON.stringify([{ member_id: 'MOCK-66-0001' }]), { status: 200 });
+      }
+      return new Response('', { status: 201 });
+    }) as typeof fetch;
+
+    const supa = createSupabaseClient({
+      env: {
+        SUPABASE_URL: 'https://demo.supabase.co',
+        SUPABASE_SECRET_KEY: 'sb_secret_test',
+        SUPABASE_SCHEMA: 'public-cee-v2'
+      },
+      fetchImpl: okFetch
+    });
+
+    expect(supa.isEnabled()).toBe(true);
+    expect(await supa.probe()).toBe('connected');
+    await supa.upsertSetting('sheet_config', '{"mode":"mock"}', 12345);
+
+    expect(calls[0].headers['accept-profile']).toBe('public-cee-v2');
+    expect(calls[0].headers['apikey']).toBe('sb_secret_test');
+    expect(calls[1].headers['content-profile']).toBe('public-cee-v2');
+    expect(calls[1].url).toBe('https://demo.supabase.co/rest/v1/app_settings?on_conflict=key');
+
+    // Graceful fallback when Supabase responds with PGRST106 (schema not exposed yet)
+    const origWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+    try {
+      const missingFetch = (async () =>
+        new Response(
+          JSON.stringify({ code: 'PGRST106', message: 'The schema must be one of the following: public' }),
+          { status: 406 }
+        )) as unknown as typeof fetch;
+
+      const missingSupa = createSupabaseClient({
+        env: {
+          SUPABASE_URL: 'https://demo.supabase.co',
+          SUPABASE_SECRET_KEY: 'sb_secret_test'
+        },
+        fetchImpl: missingFetch
+      });
+
+      expect(await missingSupa.probe()).toBe('schema_missing');
+      expect(missingSupa.getStatus()).toBe('schema_missing');
+      expect(warnings.some((w) => w.includes('public-cee-v2'))).toBe(true);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  test('runtime writes through to Supabase and reports dbBackend: supabase when connected', async () => {
+    const upsertedUsers: string[] = [];
+    const upsertedSettings: string[] = [];
+    const mockSupa = {
+      schema: 'public-cee-v2',
+      isEnabled: () => true,
+      getStatus: () => 'connected' as const,
+      probe: async () => 'connected' as const,
+      listUsers: async () => [],
+      getUser: async () => null,
+      upsertUsers: async (users: Array<{ member_id: string }>) => {
+        upsertedUsers.push(...users.map((u) => u.member_id));
+        return true;
+      },
+      deleteUser: async () => true,
+      listSessions: async () => [],
+      getSession: async () => null,
+      upsertSession: async () => true,
+      deleteSession: async () => true,
+      deleteUserSessions: async () => true,
+      listSettings: async () => [],
+      upsertSetting: async (key: string) => {
+        upsertedSettings.push(key);
+        return true;
+      }
+    };
+
+    const { call, close } = createHarness({}, undefined, mockSupa);
+    try {
+      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      expect(adm.status).toBe(200);
+      expect(upsertedUsers).toContain('MOCK-66-0001');
+
+      const dash = await call('GET', '/api/dashboard', undefined, adm.cookie);
+      expect(dash.status).toBe(200);
+      expect(dash.body.meta.dbBackend).toBe('supabase');
+      expect(dash.body.meta.supabaseStatus).toBe('connected');
+
+      await call('POST', '/api/sheets/config', { mode: 'mock' }, adm.cookie);
+      expect(upsertedSettings).toContain('sheet_config');
     } finally {
       close();
     }

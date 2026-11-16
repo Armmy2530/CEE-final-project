@@ -69,6 +69,19 @@ export function normalizeMemberId(id: string): string {
 
 export const SESSION_MS = 7 * 24 * 3600 * 1000;
 const sha = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
+export const hashSessionToken = sha;
+
+export interface DbSettingRow {
+  key: string;
+  value: string;
+  updated_at: number;
+}
+
+export interface DbSessionRow {
+  token_hash: string;
+  member_id: string;
+  expires_at: number;
+}
 
 function scrypt(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) =>
@@ -95,6 +108,11 @@ export function openDb(file: string) {
       member_id TEXT NOT NULL REFERENCES users(member_id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
     PRAGMA foreign_keys = ON;
   `);
 
@@ -110,8 +128,19 @@ export function openDb(file: string) {
     list: db.prepare(
       'SELECT member_id, full_name, role, pw_hash IS NOT NULL AS has_password, theme, created_at FROM users ORDER BY role, member_id'
     ),
+    listAll: db.prepare('SELECT * FROM users ORDER BY created_at ASC, member_id ASC'),
     insert: db.prepare('INSERT INTO users (member_id, full_name, role, created_at) VALUES (?,?,?,?)'),
     insertIgnore: db.prepare('INSERT OR IGNORE INTO users (member_id, full_name, role, created_at) VALUES (?,?,?,?)'),
+    upsertUser: db.prepare(
+      `INSERT INTO users (member_id, full_name, role, pw_hash, pw_salt, theme, created_at)
+       VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT(member_id) DO UPDATE SET
+         full_name = excluded.full_name,
+         role = excluded.role,
+         pw_hash = COALESCE(excluded.pw_hash, users.pw_hash),
+         pw_salt = COALESCE(excluded.pw_salt, users.pw_salt),
+         theme = COALESCE(excluded.theme, users.theme)`
+    ),
     promoteAdmin: db.prepare("UPDATE users SET role = 'admin' WHERE LOWER(member_id) = LOWER(?)"),
     firstUser: db.prepare('SELECT member_id FROM users ORDER BY created_at ASC, member_id ASC LIMIT 1'),
     setPw: db.prepare('UPDATE users SET pw_hash = ?, pw_salt = ? WHERE member_id = ?'),
@@ -119,14 +148,26 @@ export function openDb(file: string) {
     del: db.prepare('DELETE FROM users WHERE member_id = ?'),
     admins: db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"),
     sessIns: db.prepare('INSERT INTO sessions (token_hash, member_id, expires_at) VALUES (?,?,?)'),
+    sessUpsert: db.prepare(
+      `INSERT INTO sessions (token_hash, member_id, expires_at) VALUES (?,?,?)
+       ON CONFLICT(token_hash) DO UPDATE SET member_id = excluded.member_id, expires_at = excluded.expires_at`
+    ),
     sessGet: db.prepare(`SELECT u.member_id, u.full_name, u.role, u.theme FROM sessions s
       JOIN users u ON u.member_id = s.member_id WHERE s.token_hash = ? AND s.expires_at > ?`),
+    sessList: db.prepare('SELECT token_hash, member_id, expires_at FROM sessions WHERE expires_at > ?'),
     sessDel: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
     sessDelUser: db.prepare('DELETE FROM sessions WHERE member_id = ?'),
-    sessPurge: db.prepare('DELETE FROM sessions WHERE expires_at <= ?')
+    sessPurge: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
+    settingGet: db.prepare('SELECT key, value, updated_at FROM app_settings WHERE key = ?'),
+    settingList: db.prepare('SELECT key, value, updated_at FROM app_settings'),
+    settingSet: db.prepare(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    )
   };
 
   return {
+    isMemory: file === ':memory:',
     seedFromMembers(members: Array<Pick<MemberRecord, 'member_id' | 'full_name'>>) {
       if (!members.length) return;
       const now = Date.now();
@@ -159,6 +200,20 @@ export function openDb(file: string) {
     listUsers(): PublicUser[] {
       const rows = q.list.all() as Array<Omit<PublicUser, 'has_password'> & { has_password: number }>;
       return rows.map((u) => ({ ...u, has_password: Boolean(u.has_password) }));
+    },
+    listAllUserRows(): DbUserRow[] {
+      return (q.listAll.all() as DbUserRow[]).map((r) => ({ ...r }));
+    },
+    upsertUserFromRemote(u: DbUserRow) {
+      q.upsertUser.run(
+        normalizeMemberId(u.member_id),
+        u.full_name,
+        u.role,
+        u.pw_hash ?? null,
+        u.pw_salt ?? null,
+        u.theme ?? null,
+        Number(u.created_at) || Date.now()
+      );
     },
     createUser(member_id: string, full_name: string, role: UserRole) {
       q.insert.run(normalizeMemberId(member_id), full_name, role, Date.now());
@@ -202,13 +257,33 @@ export function openDb(file: string) {
       q.sessIns.run(sha(token), member_id, Date.now() + SESSION_MS);
       return token;
     },
+    upsertSessionFromRemote(token_hash: string, member_id: string, expires_at: number) {
+      q.sessUpsert.run(token_hash, member_id, expires_at);
+    },
     getSession(token: string | undefined | null): SessionUser | null {
       if (!token) return null;
       const row = q.sessGet.get(sha(token), Date.now()) as SessionUser | undefined;
       return row ? { ...row } : null;
     },
+    listSessions(): DbSessionRow[] {
+      return (q.sessList.all(Date.now()) as DbSessionRow[]).map((s) => ({ ...s }));
+    },
     deleteSession(token: string | undefined | null) {
       if (token) q.sessDel.run(sha(token));
+    },
+    getSetting(key: string): string | null {
+      const row = q.settingGet.get(key) as DbSettingRow | undefined;
+      return row ? row.value : null;
+    },
+    getSettingRow(key: string): DbSettingRow | null {
+      const row = q.settingGet.get(key) as DbSettingRow | undefined;
+      return row ? { ...row } : null;
+    },
+    setSetting(key: string, value: string, updatedAt = Date.now()) {
+      q.settingSet.run(key, value, updatedAt);
+    },
+    listSettings(): DbSettingRow[] {
+      return (q.settingList.all() as DbSettingRow[]).map((s) => ({ ...s }));
     },
     close() {
       db.close();

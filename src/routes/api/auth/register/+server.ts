@@ -33,7 +33,7 @@ export const POST: RequestHandler = async (event) => {
   if (!validPassword(password)) {
     return jsonFail(400, 'Password must be at least 8 characters.');
   }
-  if (rt.db.getUser(id)) {
+  if (await rt.resolveUser(id)) {
     return jsonFail(409, 'This ID already exists.');
   }
 

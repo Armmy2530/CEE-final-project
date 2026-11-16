@@ -3,59 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addDays, daysBetween } from './dates';
-import { KEY_FIELD, NORMALIZERS, rowsToObjects, TABS, type RawRow, type SheetData, type TabName } from './sheets';
+import { KEY_FIELD, NORMALIZERS, parseCsv, rowsToObjects, TABS, type RawRow, type SheetData, type TabName } from './sheets';
+
+export { parseCsv };
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
-
-export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = '';
-  let inQuotes = false;
-
-  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (src[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ',') {
-      row.push(field);
-      field = '';
-    } else if (ch === '\r') {
-      if (src[i + 1] === '\n') i++;
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-    } else if (ch === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-    } else {
-      field += ch;
-    }
-  }
-
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-
-  return rows.filter((r) => r.some((cell) => cell.trim() !== ''));
-}
 
 export function resolveSampleSheetsDir(): string {
   const candidates = [

@@ -1,8 +1,18 @@
 import path from 'node:path';
 import { buildDashboard, type DashboardPayload } from './dashboard';
 import { todayInTz } from './dates';
-import { openDb, type AppDb } from './db';
-import { createSource } from './sheets';
+import {
+  hashSessionToken,
+  openDb,
+  type AppDb,
+  type DbUserRow,
+  type SessionUser,
+  type ThemeMode,
+  type UserRole
+} from './db';
+import { createSource, type SheetConfig } from './sheets';
+import { createSupabaseClient, type SupabaseClient } from './supabase';
+import type { DbBackend, SupabaseStatus } from '../types';
 
 export const ID_RE = /^[A-Za-z0-9_-]{2,20}$/;
 export const validPassword = (p: unknown): p is string => typeof p === 'string' && p.length >= 8 && p.length <= 100;
@@ -32,17 +42,212 @@ export function createLimiter(max: number, windowMs: number) {
 export interface RuntimeOptions {
   env?: Record<string, string | undefined>;
   db?: AppDb;
-  source?: ReturnType<typeof createSource>;
+  source?: ReturnType<typeof createSource> | Pick<ReturnType<typeof createSource>, 'getData' | 'mode'>;
+  supabase?: SupabaseClient;
 }
 
-export function createRuntime({ env = process.env, db, source }: RuntimeOptions = {}) {
-  const database = db || openDb(env.DB_PATH || path.join(process.cwd(), 'data', 'app.db'));
-  const sheetSource = source || createSource({ env });
+export function createRuntime({ env = process.env, db, source, supabase }: RuntimeOptions = {}) {
+  const rawDb = db || openDb(env.DB_PATH || path.join(process.cwd(), 'data', 'app.db'));
+  const sheetSource = (source || createSource({ env })) as ReturnType<typeof createSource>;
   const tz = env.TZ_NAME || 'Asia/Bangkok';
   const loginLimit = createLimiter(8, 15 * 60 * 1000);
   const chatLimit = createLimiter(20, 60 * 1000);
+
+  const shouldEnableSupabase =
+    Boolean(supabase) ||
+    (Boolean(env.SUPABASE_URL) &&
+      Boolean(env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_PUBLISHABLE_KEY) &&
+      env.DB_PATH !== ':memory:' &&
+      !rawDb.isMemory);
+
+  const supa: SupabaseClient =
+    supabase ||
+    createSupabaseClient({
+      env: shouldEnableSupabase ? env : {}
+    });
+
+  // Restore saved sheet_config from local SQLite on startup if present
+  try {
+    const savedSheet = rawDb.getSetting('sheet_config');
+    if (savedSheet && typeof sheetSource.setConfig === 'function') {
+      const parsed = JSON.parse(savedSheet) as Partial<SheetConfig>;
+      if (parsed && (parsed.mode === 'mock' || parsed.mode === 'google')) {
+        sheetSource.setConfig({
+          mode: parsed.mode,
+          sheetId: String(parsed.sheetId || ''),
+          sheetTitle: parsed.sheetTitle ? String(parsed.sheetTitle) : undefined
+        });
+      }
+    }
+  } catch {
+    // ignore malformed saved sheet_config
+  }
+
+  const pendingSyncs = new Set<Promise<unknown>>();
+  function trackSync(p: Promise<unknown>) {
+    pendingSyncs.add(p);
+    p.finally(() => pendingSyncs.delete(p));
+  }
+
+  function isSupaConnected(): boolean {
+    return supa.isEnabled() && supa.getStatus() === 'connected';
+  }
+
+  function getSupabaseStatus(): SupabaseStatus {
+    return supa.getStatus();
+  }
+
+  function getDbBackend(): DbBackend {
+    return isSupaConnected() ? 'supabase' : 'sqlite';
+  }
+
+  const database: AppDb = {
+    ...rawDb,
+    createUser(member_id: string, full_name: string, role: UserRole) {
+      rawDb.createUser(member_id, full_name, role);
+      const row = rawDb.getUser(member_id);
+      if (row && isSupaConnected()) {
+        trackSync(supa.upsertUsers([row], false));
+      }
+    },
+    deleteUser(id: string) {
+      const target = rawDb.getUser(id);
+      const res = rawDb.deleteUser(id);
+      if (res === 'ok' && target && isSupaConnected()) {
+        trackSync(supa.deleteUser(target.member_id));
+      }
+      return res;
+    },
+    async setPassword(id: string, password: string) {
+      await rawDb.setPassword(id, password);
+      const row = rawDb.getUser(id);
+      if (row && isSupaConnected()) {
+        await supa.upsertUsers([row], false);
+        await supa.deleteUserSessions(row.member_id);
+      }
+    },
+    resetPassword(id: string) {
+      rawDb.resetPassword(id);
+      const row = rawDb.getUser(id);
+      if (row && isSupaConnected()) {
+        trackSync(
+          (async () => {
+            await supa.upsertUsers([row], false);
+            await supa.deleteUserSessions(row.member_id);
+          })()
+        );
+      }
+    },
+    setTheme(id: string, theme: ThemeMode) {
+      rawDb.setTheme(id, theme);
+      const row = rawDb.getUser(id);
+      if (row && isSupaConnected()) {
+        trackSync(supa.upsertUsers([row], false));
+      }
+    },
+    createSession(member_id: string): string {
+      const token = rawDb.createSession(member_id);
+      if (isSupaConnected()) {
+        const now = Date.now();
+        trackSync(
+          supa.upsertSession({
+            token_hash: hashSessionToken(token),
+            member_id,
+            created_at: now,
+            expires_at: now + rawDb.SESSION_MS
+          })
+        );
+      }
+      return token;
+    },
+    deleteSession(token: string | undefined | null) {
+      rawDb.deleteSession(token);
+      if (token && isSupaConnected()) {
+        trackSync(supa.deleteSession(hashSessionToken(token)));
+      }
+    },
+    setSetting(key: string, value: string, updatedAt = Date.now()) {
+      rawDb.setSetting(key, value, updatedAt);
+      if (isSupaConnected()) {
+        trackSync(supa.upsertSetting(key, value, updatedAt));
+      }
+    }
+  };
+
   let seeded = false;
   let seeding: Promise<void> | null = null;
+  let supabaseSynced = false;
+
+  async function syncWithSupabase(primaryAdminId?: string) {
+    if (!supa.isEnabled() || supabaseSynced) return;
+    const status = await supa.probe();
+    if (status !== 'connected') return;
+
+    supabaseSynced = true;
+
+    const [remoteUsers, remoteSessions, remoteSettings] = await Promise.all([
+      supa.listUsers(),
+      supa.listSessions(),
+      supa.listSettings()
+    ]);
+
+    if (remoteUsers && remoteUsers.length) {
+      for (const ru of remoteUsers) {
+        rawDb.upsertUserFromRemote(ru);
+      }
+    }
+    if (primaryAdminId) {
+      rawDb.seedFromMembers([{ member_id: primaryAdminId, full_name: '' }]);
+    }
+
+    if (remoteSessions && remoteSessions.length) {
+      for (const rs of remoteSessions) {
+        if (rawDb.getUser(rs.member_id)) {
+          rawDb.upsertSessionFromRemote(rs.token_hash, rs.member_id, rs.expires_at);
+        }
+      }
+    }
+
+    if (remoteSettings && remoteSettings.length) {
+      for (const rs of remoteSettings) {
+        const local = rawDb.getSettingRow(rs.key);
+        if (!local || rs.updated_at > local.updated_at) {
+          rawDb.setSetting(rs.key, rs.value, rs.updated_at);
+          if (rs.key === 'sheet_config' && typeof sheetSource.setConfig === 'function') {
+            try {
+              const parsed = JSON.parse(rs.value) as Partial<SheetConfig>;
+              if (parsed && (parsed.mode === 'mock' || parsed.mode === 'google')) {
+                sheetSource.setConfig({
+                  mode: parsed.mode,
+                  sheetId: String(parsed.sheetId || ''),
+                  sheetTitle: parsed.sheetTitle ? String(parsed.sheetTitle) : undefined
+                });
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    }
+
+    // Push local seeded users & settings up to Supabase
+    const localUsers = rawDb.listAllUserRows();
+    if (localUsers.length) {
+      await supa.upsertUsers(localUsers, true);
+      if (primaryAdminId) {
+        const adminRow = rawDb.getUser(primaryAdminId);
+        if (adminRow) await supa.upsertUsers([adminRow], false);
+      }
+    }
+
+    const remoteSettingKeys = new Set((remoteSettings || []).map((s) => s.key));
+    for (const ls of rawDb.listSettings()) {
+      if (!remoteSettingKeys.has(ls.key)) {
+        await supa.upsertSetting(ls.key, ls.value, ls.updated_at);
+      }
+    }
+  }
 
   async function ensureSeeded() {
     if (seeded) return;
@@ -51,6 +256,7 @@ export function createRuntime({ env = process.env, db, source }: RuntimeOptions 
       try {
         const r = await sheetSource.getData();
         database.seedFromMembers(r.data.Members);
+        await syncWithSupabase(r.data.Members[0]?.member_id);
         seeded = true;
       } catch (e) {
         console.error('seed:', (e as Error).message);
@@ -61,27 +267,77 @@ export function createRuntime({ env = process.env, db, source }: RuntimeOptions 
     return seeding;
   }
 
+  async function resolveSession(token: string | undefined | null): Promise<SessionUser | null> {
+    if (!token) return null;
+    const local = database.getSession(token);
+    if (local) return local;
+    if (isSupaConnected()) {
+      const remote = await supa.getSession(hashSessionToken(token));
+      if (remote) {
+        rawDb.upsertUserFromRemote(remote.row);
+        rawDb.upsertSessionFromRemote(hashSessionToken(token), remote.row.member_id, remote.expires_at);
+        return remote.user;
+      }
+    }
+    return null;
+  }
+
+  async function resolveUser(id: string): Promise<DbUserRow | null> {
+    const local = database.getUser(id);
+    if (local) return local;
+    if (isSupaConnected()) {
+      const remote = await supa.getUser(id);
+      if (remote) {
+        rawDb.upsertUserFromRemote(remote);
+        return rawDb.getUser(id);
+      }
+    }
+    return null;
+  }
+
   async function getDashboard(force = false): Promise<DashboardPayload> {
     const r = await sheetSource.getData({ force });
     if (!seeded) {
       database.seedFromMembers(r.data.Members);
+      await syncWithSupabase(r.data.Members[0]?.member_id);
       seeded = true;
     }
+    const cfg = typeof sheetSource.getConfig === 'function' ? sheetSource.getConfig() : undefined;
     return {
       ...buildDashboard(r.data, todayInTz(tz)),
-      meta: { source: r.source, fetchedAt: r.fetchedAt, stale: Boolean(r.stale) }
+      meta: {
+        source: r.source,
+        fetchedAt: r.fetchedAt,
+        stale: Boolean(r.stale),
+        sheetId: cfg?.mode === 'google' ? cfg.sheetId : undefined,
+        sheetTitle: cfg?.mode === 'google' ? cfg.sheetTitle : undefined,
+        dbBackend: getDbBackend(),
+        supabaseStatus: getSupabaseStatus()
+      }
     };
+  }
+
+  async function flushSync() {
+    if (pendingSyncs.size) {
+      await Promise.allSettled(Array.from(pendingSyncs));
+    }
   }
 
   return {
     env,
     db: database,
     source: sheetSource,
+    supabase: supa,
     tz,
     loginLimit,
     chatLimit,
     ensureSeeded,
-    getDashboard
+    resolveSession,
+    resolveUser,
+    getDashboard,
+    getDbBackend,
+    getSupabaseStatus,
+    flushSync
   };
 }
 

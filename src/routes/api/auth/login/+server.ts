@@ -22,6 +22,7 @@ export const POST: RequestHandler = async (event) => {
     return jsonFail(429, 'Too many attempts. Try again in 15 minutes.');
   }
 
+  if (id) await rt.resolveUser(id);
   const u = id && typeof password === 'string' ? await rt.db.verifyPassword(id, password) : null;
 
   if (!u) {

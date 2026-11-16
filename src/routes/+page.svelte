@@ -6,6 +6,7 @@
   import ChatWidget from '$lib/components/ChatWidget.svelte';
   import MembersView from '$lib/components/MembersView.svelte';
   import ProjectsView from '$lib/components/ProjectsView.svelte';
+  import SheetPickerModal from '$lib/components/SheetPickerModal.svelte';
   import SummaryView from '$lib/components/SummaryView.svelte';
   import ToastContainer, { type ToastItem } from '$lib/components/ToastContainer.svelte';
   import Topbar, { type PageId } from '$lib/components/Topbar.svelte';
@@ -24,6 +25,7 @@
   let loadError = $state('');
   let refreshing = $state(false);
   let notifOpen = $state(false);
+  let sheetPickerOpen = $state(false);
   let hasUnread = $state(false);
   let toasts = $state<ToastItem[]>([]);
   let nextToastId = 1;
@@ -34,7 +36,9 @@
   });
 
   const sourceLabel = $derived(
-    dash?.meta?.source === 'google' ? 'Master sheet' : 'Mock CSV data'
+    dash?.meta?.source === 'google'
+      ? dash.meta.sheetTitle || 'Google Sheet'
+      : 'Mock CSV data'
   );
 
   const syncedLabel = $derived.by(() => {
@@ -75,9 +79,14 @@
     hasUnread = false;
   }
 
-  function pushToast(title: string, body: string, severity: 'critical' | 'warning') {
+  function pushToast(
+    title: string,
+    body: string,
+    severity: ToastItem['severity'],
+    hideView = false
+  ) {
     const id = nextToastId++;
-    toasts = [...toasts, { id, title, body, severity }];
+    toasts = [...toasts, { id, title, body, severity, hideView }];
     setTimeout(() => {
       toasts = toasts.filter((t) => t.id !== id);
     }, 9000);
@@ -153,6 +162,7 @@
     dash = null;
     toasts = [];
     notifOpen = false;
+    sheetPickerOpen = false;
   }
 
   async function handleSetTheme(t: ThemeMode) {
@@ -177,6 +187,11 @@
     selectedProjectId = eventId;
     activePage = 'projects';
     if (typeof window !== 'undefined') window.scrollTo(0, 0);
+  }
+
+  async function handleSheetConnected(message: string) {
+    await loadDashboard(true, false);
+    pushToast('Data source updated', message, 'ok', true);
   }
 
   onMount(() => {
@@ -210,6 +225,7 @@
       onSetTheme={handleSetTheme}
       onMarkSeen={markSeen}
       onRefresh={() => loadDashboard(true, false)}
+      onOpenSheetPicker={() => (sheetPickerOpen = true)}
       onLogout={handleLogout}
     >
       {#if activePage === 'summary'}
@@ -221,6 +237,7 @@
           onRefresh={() => loadDashboard(true, false)}
           onOpenProject={openProject}
           onSelectPage={selectPage}
+          onOpenSheetPicker={() => (sheetPickerOpen = true)}
         />
       {:else if activePage === 'projects'}
         <ProjectsView
@@ -229,6 +246,7 @@
           {refreshing}
           onRefresh={() => loadDashboard(true, false)}
           onSelectPage={selectPage}
+          onOpenSheetPicker={() => (sheetPickerOpen = true)}
         />
       {:else if activePage === 'calendar'}
         <Calendar
@@ -246,6 +264,12 @@
     </Topbar>
 
     <ChatWidget firstName={user.full_name.split(' ')[0]} />
+
+    <SheetPickerModal
+      open={sheetPickerOpen}
+      onClose={() => (sheetPickerOpen = false)}
+      onConnected={handleSheetConnected}
+    />
 
     <ToastContainer
       {toasts}

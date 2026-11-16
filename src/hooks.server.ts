@@ -8,7 +8,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   await runtime.ensureSeeded();
   const token = event.cookies.get('sid');
-  event.locals.user = runtime.db.getSession(token);
+  event.locals.user = await runtime.resolveSession(token);
 
   const isApi = event.url.pathname.startsWith('/api/');
   const unsafe = event.request.method !== 'GET' && event.request.method !== 'HEAD';

@@ -10,13 +10,15 @@
     selectedProjectId = $bindable<string | null>(null),
     refreshing = false,
     onRefresh,
-    onSelectPage
+    onSelectPage,
+    onOpenSheetPicker
   }: {
     dash: DashboardPayload | null;
     selectedProjectId?: string | null;
     refreshing?: boolean;
     onRefresh?: () => void;
     onSelectPage?: (page: PageId) => void;
+    onOpenSheetPicker?: () => void;
   } = $props();
 
   let query = $state('');
@@ -356,7 +358,7 @@
         <span>
           <b>
             {dash?.meta?.source === 'google'
-              ? 'Connected to Google Sheets'
+              ? `Connected to ${dash.meta.sheetTitle || 'Google Sheets'}`
               : 'Connected to normalized Mock-Data CSVs'}
           </b>
           <small>
@@ -369,11 +371,18 @@
               : 'just now'}
           </small>
         </span>
-        {#if onRefresh}
-          <button type="button" id="sync-btn" disabled={refreshing} onclick={onRefresh}>
-            &#8635; {refreshing ? 'Syncing...' : 'Sync now'}
-          </button>
-        {/if}
+        <div class="data-source-actions">
+          {#if onOpenSheetPicker}
+            <button type="button" onclick={onOpenSheetPicker}>
+              Connect Google Sheet
+            </button>
+          {/if}
+          {#if onRefresh}
+            <button type="button" id="sync-btn" disabled={refreshing} onclick={onRefresh}>
+              &#8635; {refreshing ? 'Syncing...' : 'Sync now'}
+            </button>
+          {/if}
+        </div>
       </div>
     </div>
   {:else if dash}
