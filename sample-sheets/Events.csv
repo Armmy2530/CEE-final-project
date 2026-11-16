@@ -1,0 +1,10 @@
+event_id,title,date,end_date,location,description,budget_planned,status,image_url
+EV001,Orientation Day,2026-08-27,2026-08-28,Main Hall,"Welcome event for new members: club tour, team games and a short talk about what the club does during the year.",8000,Completed,
+EV002,Welcome Workshop,2026-09-14,2026-09-14,Room 301,"Hands-on workshop on study planning and note-taking, run by senior members.",12000,Completed,
+EV003,Study Camp,2026-10-01,2026-10-03,Hill Resort,"Three-day overnight camp with tutoring sessions, group projects and evening activities before mid-term exams.",20000,Completed,
+EV004,Charity Run,2026-10-16,2026-10-16,City Park,"A 5 km fun run that raised funds for a school library. Includes registration, water stations and prizes.",15000,Completed,
+EV005,Career Talk,2026-10-28,2026-10-28,Auditorium,Alumni speakers share how they found their first job and answer questions from members.,6000,Completed,
+EV006,Board Game Night,2026-11-06,2026-11-06,Club Room,Casual evening of board games. Cancelled because the venue was no longer available.,3000,Cancelled,
+EV007,Photography Walk,2026-11-17,2026-11-17,Old Town,Guided photo walk through the old town with a mini photo contest at the end.,5000,Scheduled,
+EV008,Mid-term Review Session,2026-11-27,2026-12-01,Library Hall,"Five days of review sessions for mid-term exams, one subject per day, led by volunteer tutors.",7000,Scheduled,
+EV009,Year-End Party,2026-12-11,2026-12-11,Rooftop Garden,"Celebration for all members with food, performances and awards for the year.",25000,Scheduled,

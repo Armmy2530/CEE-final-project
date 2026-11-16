@@ -1,0 +1,25 @@
+member_id,full_name,department,role,email,joined_date,gender,year,major
+ST001,Ploy Sample,Academic,President,st001@example.com,2025-10-18,Male,1,Chemistry
+ST002,Nara Sample,Events,Vice President,st002@example.com,2026-01-14,Female,2,Civil Engineering
+ST003,Mali Sample,Publicity,Head,st003@example.com,2025-06-17,Female,3,Computer Engineering
+ST004,Kanda Sample,Finance,Head,st004@example.com,2025-07-12,Female,4,Biology
+ST005,Tawan Sample,Logistics,Head,st005@example.com,2026-04-18,Other,1,Design
+ST006,Pim Sample,Academic,Head,st006@example.com,2026-03-07,Female,2,Accounting
+ST007,Arun Sample,Events,Head,st007@example.com,2025-06-04,Male,3,Chemistry
+ST008,Fah Sample,Publicity,Member,st008@example.com,2025-03-25,Male,4,Civil Engineering
+ST009,Ben Sample,Finance,Member,st009@example.com,2026-01-23,Male,1,Computer Engineering
+ST010,Nok Sample,Logistics,Member,st010@example.com,2026-06-23,Female,2,Biology
+ST011,Ton Sample,Academic,Member,st011@example.com,2026-06-09,Female,3,Design
+ST012,Mint Sample,Events,Member,st012@example.com,2025-07-12,Female,4,Accounting
+ST013,Beam Sample,Publicity,Member,st013@example.com,2025-11-27,Other,1,Chemistry
+ST014,Aom Sample,Finance,Member,st014@example.com,2026-05-11,Female,2,Civil Engineering
+ST015,Prae Sample,Logistics,Member,st015@example.com,2026-04-02,Male,3,Computer Engineering
+ST016,Pat Sample,Academic,Member,st016@example.com,2026-01-01,Male,4,Biology
+ST017,Jin Sample,Events,Member,st017@example.com,2025-11-16,Male,1,Design
+ST018,Cream Sample,Publicity,Member,st018@example.com,2025-01-12,Female,2,Accounting
+ST019,Ice Sample,Finance,Member,st019@example.com,2025-08-13,Female,3,Chemistry
+ST020,Fern Sample,Logistics,Member,st020@example.com,2026-07-17,Female,4,Civil Engineering
+ST021,Gun Sample,Academic,Member,st021@example.com,2026-03-18,Other,1,Computer Engineering
+ST022,Hana Sample,Events,Member,st022@example.com,2026-02-03,Female,2,Biology
+ST023,Kluay Sample,Publicity,Member,st023@example.com,2025-04-08,Male,3,Design
+ST024,Dao Sample,Finance,Member,st024@example.com,2024-12-23,Male,4,Accounting

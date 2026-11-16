@@ -1,0 +1,20 @@
+# One-click deploy on Render (free web service): New > Blueprint > pick this repo.
+services:
+  - type: web
+    name: club-activity-dashboard
+    runtime: node
+    plan: free
+    buildCommand: echo "no build step"
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.13.0
+      - key: TZ_NAME
+        value: Asia/Bangkok
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
