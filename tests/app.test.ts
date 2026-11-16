@@ -6,7 +6,7 @@ import { normalizeDate, daysBetween, addDays } from '../src/lib/server/dates';
 import { parseBatchResponse, createSource } from '../src/lib/server/sheets';
 import { buildDashboard } from '../src/lib/server/dashboard';
 import { generateMock, parseCsv } from '../src/lib/server/mock';
-import { answerOffline } from '../src/lib/server/chat';
+import { answerOffline, askOpenRouter, buildContext } from '../src/lib/server/chat';
 import { openDb } from '../src/lib/server/db';
 import { createRuntime, setRuntimeForTesting } from '../src/lib/server/runtime';
 import { rank } from '../src/lib/search';
@@ -247,17 +247,142 @@ describe('Project search and offline chat', () => {
     expect(titles('  ')).toHaveLength(items.length);
   });
 
-  test('offline chat answers in Thai and English for 67 members', () => {
+  test('offline chat answers in Thai and English for 67 members, projects, and expense categories', () => {
     const dash = buildDashboard(generateMock('2026-11-16'), '2026-11-16');
     expect(answerOffline('how many members?', dash)).toMatch(/67 members/);
     expect(answerOffline('จำนวนสมาชิก', dash)).toMatch(/67 คน/);
+
+    // Specific project code & name lookup
+    const ac2 = answerOffline('What is the budget for AC-002?', dash);
+    expect(ac2).toContain('AC-002');
+    expect(ac2).toContain('Open House Engineering 2026');
+    expect(ac2).toContain('฿44,000');
+
+    const openHouse = answerOffline('Tell me about Open House', dash);
+    expect(openHouse).toContain('Open House Engineering 2026');
+
+    // Expense category lookup
+    const food = answerOffline('How much did we spend on Food & Beverages?', dash);
+    expect(food).toContain('Food & Beverages');
+    const cats = answerOffline('สรุปหมวดค่าใช้จ่าย', dash);
+    expect(cats).toContain('Speaker Honorarium');
+  });
+
+  test('buildContext includes enriched aggregates and never leaks member emails or phone numbers', () => {
+    const dash = buildDashboard(generateMock('2026-11-16'), '2026-11-16');
+    const ctx = buildContext(dash);
+    expect(ctx.today).toBe('2026-11-16');
+    expect(ctx.metrics.members).toBe(67);
+    expect(ctx.metrics.events).toBe(20);
+    expect(Object.keys(ctx.members_by_department).length).toBeGreaterThan(0);
+    expect(ctx.spending_by_category['Food & Beverages']).toBeGreaterThan(0);
+    expect(ctx.events).toHaveLength(20);
+    expect(ctx.events[1]).toMatchObject({
+      id: 'AC-002',
+      title: 'Open House Engineering 2026',
+      planned_budget: 44000
+    });
+    expect(ctx.active_alerts.length).toBeGreaterThan(0);
+
+    const serialized = JSON.stringify(ctx);
+    expect(serialized).not.toMatch(/@example\.com|@chula\.ac\.th|email|phone/i);
+  });
+
+  test('askOpenRouter sends OpenAI-compatible request, headers, system context, and parses string & array replies', async () => {
+    const dash = buildDashboard(generateMock('2026-11-16'), '2026-11-16');
+    let capturedUrl = '';
+    let capturedInit: RequestInit | undefined;
+
+    const mockFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      capturedUrl = String(url);
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '  AC-002 spent ฿40,830 of ฿44,000.  ' } }]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as typeof fetch;
+
+    const reply = await askOpenRouter({
+      env: {
+        OPENROUTER_API_KEY: 'sk-or-test-key',
+        PUBLIC_APP_URL: 'https://club.example.com'
+      },
+      dash,
+      message: 'How much did AC-002 spend?',
+      history: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' }
+      ],
+      fetchImpl: mockFetch
+    });
+
+    expect(reply).toBe('AC-002 spent ฿40,830 of ฿44,000.');
+    expect(capturedUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(capturedInit?.method).toBe('POST');
+
+    const headers = new Headers(capturedInit?.headers);
+    expect(headers.get('authorization')).toBe('Bearer sk-or-test-key');
+    expect(headers.get('x-title')).toBe('Club Dashboard');
+    expect(headers.get('http-referer')).toBe('https://club.example.com');
+    expect(headers.get('content-type')).toBe('application/json');
+
+    const payload = JSON.parse(String(capturedInit?.body));
+    expect(payload.model).toBe('google/gemini-2.5-flash');
+    expect(payload.max_tokens).toBe(500);
+    expect(payload.temperature).toBe(0.2);
+    expect(payload.messages[0].role).toBe('system');
+    expect(payload.messages[0].content).toContain('"spending_by_category"');
+    expect(payload.messages[0].content).toContain('"AC-002"');
+    expect(payload.messages.slice(1)).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+      { role: 'user', content: 'How much did AC-002 spend?' }
+    ]);
+
+    // Array-of-parts content & custom model/base URL support
+    const arrayFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      capturedUrl = String(url);
+      capturedInit = init;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: [
+                  { type: 'text', text: 'Line 1' },
+                  { type: 'text', text: 'Line 2' }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const arrayReply = await askOpenRouter({
+      env: {
+        OPENROUTER_API_KEY: 'sk-or-test-key',
+        OPENROUTER_MODEL: 'openai/gpt-4o-mini',
+        OPENROUTER_BASE_URL: 'https://custom-proxy.example/v1/chat/completions'
+      },
+      dash,
+      message: 'Summary?',
+      history: [],
+      fetchImpl: arrayFetch
+    });
+    expect(capturedUrl).toBe('https://custom-proxy.example/v1/chat/completions');
+    expect(JSON.parse(String(capturedInit?.body)).model).toBe('openai/gpt-4o-mini');
+    expect(arrayReply).toBe('Line 1\nLine 2');
   });
 });
 
 // ---- SvelteKit API Integration Tests ----
-function createHarness() {
+function createHarness(envOverrides: Record<string, string | undefined> = {}) {
   const db = openDb(':memory:');
-  const rt = createRuntime({ env: { TZ_NAME: 'Asia/Bangkok' }, db });
+  const rt = createRuntime({ env: { TZ_NAME: 'Asia/Bangkok', ...envOverrides }, db });
   setRuntimeForTesting(rt);
 
   const routes: Array<{
@@ -519,6 +644,53 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       }
       expect(last?.status).toBe(429);
     } finally {
+      close();
+    }
+  });
+
+  test('/api/chat uses OpenRouter when OPENROUTER_API_KEY is set and falls back to offline on error', async () => {
+    const origFetch = globalThis.fetch;
+    const { call, close } = createHarness({
+      OPENROUTER_API_KEY: 'sk-or-live-test',
+      ANTHROPIC_API_KEY: 'sk-ant-should-not-win'
+    });
+
+    try {
+      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      expect(adm.status).toBe(200);
+
+      // 1. OpenRouter succeeds -> mode: 'ai'
+      let calledUrl = '';
+      globalThis.fetch = (async (url: string | URL | Request) => {
+        calledUrl = String(url);
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'There are 67 members in the club.' } }]
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }) as unknown as typeof fetch;
+
+      const aiRes = await call('POST', '/api/chat', { message: 'How many members?' }, adm.cookie);
+      expect(aiRes.status).toBe(200);
+      expect(calledUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
+      expect(aiRes.body).toEqual({
+        reply: 'There are 67 members in the club.',
+        mode: 'ai'
+      });
+
+      // 2. OpenRouter returns HTTP 500 -> clean fallback to mode: 'offline'
+      globalThis.fetch = (async () => {
+        return new Response('Upstream error', { status: 500 });
+      }) as unknown as typeof fetch;
+
+      const errFallback = await call('POST', '/api/chat', { message: 'What is the budget for AC-002?' }, adm.cookie);
+      expect(errFallback.status).toBe(200);
+      expect(errFallback.body.mode).toBe('offline');
+      expect(errFallback.body.reply).toContain('AC-002');
+      expect(errFallback.body.reply).toContain('Open House Engineering 2026');
+    } finally {
+      globalThis.fetch = origFetch;
       close();
     }
   });

@@ -16,5 +16,7 @@ services:
         sync: false
       - key: GOOGLE_SHEET_ID
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
+      - key: OPENROUTER_MODEL
+        value: google/gemini-2.5-flash

@@ -1,5 +1,5 @@
 import type { RequestHandler } from './$types';
-import { answerOffline, askClaude, type ChatMessage } from '$lib/server/chat';
+import { answerOffline, askClaude, askOpenRouter, type ChatMessage } from '$lib/server/chat';
 import { jsonFail, jsonOk, readJsonBody } from '$lib/server/http';
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -35,14 +35,23 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     .map((h) => ({ role: h.role, content: h.content.slice(0, 1000) }));
 
   const dash = await rt.getDashboard(false);
-  if (rt.env.ANTHROPIC_API_KEY) {
+  if (rt.env.OPENROUTER_API_KEY) {
+    try {
+      return jsonOk({
+        reply: await askOpenRouter({ env: rt.env, dash, message: message.trim(), history: hist }),
+        mode: 'ai'
+      });
+    } catch (e) {
+      console.error('chat (openrouter):', (e as Error).message);
+    }
+  } else if (rt.env.ANTHROPIC_API_KEY) {
     try {
       return jsonOk({
         reply: await askClaude({ env: rt.env, dash, message: message.trim(), history: hist }),
         mode: 'ai'
       });
     } catch (e) {
-      console.error('chat:', (e as Error).message);
+      console.error('chat (anthropic):', (e as Error).message);
     }
   }
 

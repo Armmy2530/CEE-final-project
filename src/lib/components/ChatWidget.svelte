@@ -12,20 +12,27 @@
   let open = $state(false);
   let input = $state('');
   let asking = $state(false);
-  let chatMode = $state('Ask about the sheet data');
+  let chatMode = $state('Ask about club & sheet data');
   let history = $state<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   let messages = $state<ChatBubble[]>([]);
   let logEl = $state<HTMLDivElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let fabEl = $state<HTMLButtonElement | null>(null);
 
-  const CHIPS = ['Budget status', 'Upcoming events', 'Best attendance', 'จำนวนสมาชิก'];
+  const CHIPS = [
+    'Budget status',
+    'Spending by category',
+    'Upcoming events',
+    'Best attendance',
+    'AC-002',
+    'จำนวนสมาชิก'
+  ];
 
   $effect(() => {
     messages = [
       {
         who: 'bot',
-        text: `Hi ${firstName}! Ask me about members, events, attendance or the budget.`
+        text: `Hi ${firstName}! Ask me about members, projects (e.g. AC-002), attendance, or spending categories.`
       }
     ];
     history = [];
@@ -64,8 +71,8 @@
       history = [...history, { role: 'user', content: trimmed }, { role: 'assistant', content: reply }];
       chatMode =
         r.mode === 'ai'
-          ? 'AI answers from the sheet data'
-          : 'Offline mode (no AI key configured)';
+          ? 'OpenRouter AI • Live club data'
+          : 'Offline mode (rule-based answers)';
     } catch (e) {
       messages = [...messages.slice(0, -1), { who: 'bot', text: `Sorry, ${(e as Error).message}` }];
     } finally {
