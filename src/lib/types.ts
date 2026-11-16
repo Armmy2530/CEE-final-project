@@ -34,6 +34,38 @@ export interface ProjectPerson {
   status: 'Present' | 'Absent' | 'Late';
 }
 
+export type ProjectCategory = 'Academic' | 'Social' | 'Community' | 'Operations';
+
+export interface ProjectLead {
+  member_id: string;
+  name: string;
+  role: string;
+  initials: string;
+}
+
+export interface DashboardMember {
+  member_id: string;
+  full_name: string;
+  department: string;
+  role: string;
+  joined_date: string;
+  gender: string;
+  year: string;
+  major: string;
+  member_status: string;
+}
+
+export interface DashboardTransaction {
+  expense_id: string;
+  event_id: string;
+  event_title: string;
+  type: 'Income' | 'Expense';
+  category: string;
+  amount: number;
+  date: string;
+  receipt_ref: string;
+}
+
 export interface ProjectSummary {
   event_id: string;
   title: string;
@@ -49,6 +81,8 @@ export interface ProjectSummary {
   attendees: number;
   records: number;
   days: number;
+  lead: ProjectLead;
+  category: ProjectCategory;
   staff: ProjectPerson[];
   participants: ProjectPerson[];
   stats: {
@@ -70,6 +104,7 @@ export interface DashboardPayload {
   today: string;
   metrics: {
     members: number;
+    activeMembers: number;
     events: number;
     eventsByStatus: Record<string, number>;
     budgetActual: number;
@@ -78,8 +113,13 @@ export interface DashboardPayload {
     budgetPct: number | null;
   };
   events: ProjectSummary[];
+  members: DashboardMember[];
+  transactions: DashboardTransaction[];
   budgetByCategory: Record<string, number>;
   membersByDepartment: Record<string, number>;
+  membersByYear: Record<string, number>;
+  membersByGender: Record<string, number>;
+  membersByStatus: Record<string, number>;
   alerts: AlertItem[];
   meta?: {
     source: 'mock' | 'google';

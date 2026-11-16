@@ -1,7 +1,10 @@
 <script lang="ts">
   import { getContext, onMount } from 'svelte';
   import AuthView from '$lib/components/AuthView.svelte';
+  import BudgetView from '$lib/components/BudgetView.svelte';
+  import Calendar from '$lib/components/Calendar.svelte';
   import ChatWidget from '$lib/components/ChatWidget.svelte';
+  import MembersView from '$lib/components/MembersView.svelte';
   import ProjectsView from '$lib/components/ProjectsView.svelte';
   import SummaryView from '$lib/components/SummaryView.svelte';
   import ToastContainer, { type ToastItem } from '$lib/components/ToastContainer.svelte';
@@ -28,6 +31,22 @@
 
   $effect.pre(() => {
     user = data.user;
+  });
+
+  const sourceLabel = $derived(
+    dash?.meta?.source === 'google' ? 'Master sheet' : 'Mock CSV data'
+  );
+
+  const syncedLabel = $derived.by(() => {
+    if (refreshing) return 'Syncing...';
+    if (!dash?.meta?.fetchedAt) return 'Waiting to sync';
+    return (
+      'Synced ' +
+      new Date(dash.meta.fetchedAt).toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    );
   });
 
   function seenKey(memberId: string): string {
@@ -148,7 +167,13 @@
     }
   }
 
-  function openProjectFromCalendar(eventId: string) {
+  function selectPage(p: PageId) {
+    if (p === 'projects') selectedProjectId = null;
+    activePage = p;
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openProject(eventId: string) {
     selectedProjectId = eventId;
     activePage = 'projects';
     if (typeof window !== 'undefined') window.scrollTo(0, 0);
@@ -174,30 +199,51 @@
       alerts={dash?.alerts ?? []}
       {hasUnread}
       bind:notifOpen
-      onSelectPage={(p) => {
-        if (p === 'projects') selectedProjectId = null;
-        activePage = p;
-      }}
+      projectCount={dash?.events.length ?? 0}
+      memberCount={dash?.metrics.members ?? 0}
+      {sourceLabel}
+      {syncedLabel}
+      stale={dash?.meta?.stale ?? false}
+      {refreshing}
+      onSelectPage={selectPage}
+      onOpenProject={openProject}
       onSetTheme={handleSetTheme}
       onMarkSeen={markSeen}
+      onRefresh={() => loadDashboard(true, false)}
       onLogout={handleLogout}
-    />
-
-    <main class="main-content">
+    >
       {#if activePage === 'summary'}
         <SummaryView
           {dash}
           {loadError}
           {refreshing}
+          firstName={user.full_name.split(' ')[0]}
           onRefresh={() => loadDashboard(true, false)}
-          onOpenProject={openProjectFromCalendar}
+          onOpenProject={openProject}
+          onSelectPage={selectPage}
         />
       {:else if activePage === 'projects'}
-        <ProjectsView {dash} bind:selectedProjectId />
+        <ProjectsView
+          {dash}
+          bind:selectedProjectId
+          {refreshing}
+          onRefresh={() => loadDashboard(true, false)}
+          onSelectPage={selectPage}
+        />
+      {:else if activePage === 'calendar'}
+        <Calendar
+          events={dash?.events ?? []}
+          today={dash?.today ?? ''}
+          onOpenProject={openProject}
+        />
+      {:else if activePage === 'members'}
+        <MembersView {dash} />
+      {:else if activePage === 'budget'}
+        <BudgetView {dash} onOpenProject={openProject} />
       {:else if activePage === 'users' && user.role === 'admin'}
         <UsersView currentUser={user} />
       {/if}
-    </main>
+    </Topbar>
 
     <ChatWidget firstName={user.full_name.split(' ')[0]} />
 

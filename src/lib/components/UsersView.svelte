@@ -88,12 +88,17 @@
 
 <section id="users" class="page-content">
   <div class="page-heading">
-    <h1>Users</h1>
-    <p>Admins can add and remove accounts. New users create their own password at first sign-in.</p>
+    <div>
+      <p class="eyebrow">MANAGE <span class="heading-dot">&middot;</span> USERS</p>
+      <h1>Users</h1>
+      <p class="subheading">
+        Admins can add and remove accounts. New users create their own password at first sign-in.
+      </p>
+    </div>
   </div>
 
-  <article class="card">
-    <h2 class="card-title">Add user</h2>
+  <article class="panel" style="margin-bottom:16px">
+    <h2 style="font-size:15px;margin-bottom:14px">Add user</h2>
     <form id="addUserForm" class="inline-form" novalidate onsubmit={addUser}>
       <div>
         <label for="newId">Member ID</label>
@@ -117,23 +122,23 @@
     {/if}
   </article>
 
-  <article class="card table-card">
+  <div class="table-wrap">
     <div class="table-scroll">
-      <table class="data-table">
+      <table class="project-table">
         <thead>
           <tr>
             <th>ID</th>
-            <th>Name</th>
-            <th>Permission</th>
-            <th>Status</th>
-            <th class="right">Actions</th>
+            <th>NAME</th>
+            <th>PERMISSION</th>
+            <th>STATUS</th>
+            <th class="right">ACTIONS</th>
           </tr>
         </thead>
         <tbody id="userRows">
           {#each users as u (u.member_id)}
             {@const self = u.member_id === currentUser.member_id}
             <tr>
-              <td>{u.member_id}</td>
+              <td class="budget-cell">{u.member_id}</td>
               <td>{u.full_name}{self ? ' (you)' : ''}</td>
               <td>
                 <span class="badge" class:admin={u.role === 'admin'}>
@@ -163,5 +168,9 @@
         </tbody>
       </table>
     </div>
-  </article>
+    <div class="table-footer">
+      <span>Showing <b>{users.length}</b> accounts</span>
+      <span>Admin account controls</span>
+    </div>
+  </div>
 </section>

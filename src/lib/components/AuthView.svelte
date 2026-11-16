@@ -82,12 +82,19 @@
 
 <main id="authView" class="auth-view">
   <div class="auth-card">
-    <div class="brand auth-brand">
-      <img class="brand-logo" src="/image/academic-ac-logo.png" alt="" />
-      <span class="brand-name">Club Dashboard</span>
+    <div class="auth-brand">
+      <span class="brand-mark">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <path d="M4 14.2 20 7l16 7.2-16 7.1L4 14.2Z" />
+          <path d="M10 18v7.4c5.9 4.3 14.1 4.3 20 0V18l-10 4.5L10 18Z" />
+          <path d="M35.8 15v9.2" />
+          <circle cx="35.8" cy="27" r="1.7" />
+        </svg>
+      </span>
+      <span class="brand-word">clubhouse<span>.</span></span>
     </div>
     <h1 id="authTitle">{title}</h1>
-    <p class="auth-sub">Club Activity Dashboard</p>
+    <p class="auth-sub">Club Activity Dashboard &middot; Academic AC Workspace</p>
 
     <div class="seg" role="tablist" aria-label="Account">
       <button
