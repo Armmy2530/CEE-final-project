@@ -40,10 +40,17 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  const theme = event.locals.user?.theme || (event.cookies.get('theme') === 'dark' ? 'dark' : 'light');
+  const cookieTheme = event.cookies.get('theme');
+  const hasThemePref = Boolean(
+    event.locals.user?.theme || cookieTheme === 'light' || cookieTheme === 'dark'
+  );
+  const theme = event.locals.user?.theme || (cookieTheme === 'dark' ? 'dark' : 'light');
 
   const response = await resolve(event, {
-    transformPageChunk: ({ html }) => html.replace('%sveltekit.theme%', theme)
+    transformPageChunk: ({ html }) =>
+      html
+        .replace('%sveltekit.theme%', theme)
+        .replace('%sveltekit.themePref%', hasThemePref ? '1' : '0')
   });
 
   response.headers.set('x-content-type-options', 'nosniff');

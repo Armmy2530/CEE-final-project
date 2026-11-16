@@ -84,7 +84,7 @@
   <div class="auth-card">
     <div class="brand auth-brand">
       <img class="brand-logo" src="/image/academic-ac-logo.png" alt="" />
-      <span class="brand-name">ACADEMIC AC</span>
+      <span class="brand-name">Club Dashboard</span>
     </div>
     <h1 id="authTitle">{title}</h1>
     <p class="auth-sub">Club Activity Dashboard</p>

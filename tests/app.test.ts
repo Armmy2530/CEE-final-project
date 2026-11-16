@@ -1,4 +1,8 @@
 import { describe, test, expect } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { RequestEvent } from '@sveltejs/kit';
 
 import { buildAlerts } from '../src/lib/server/alerts';
@@ -814,4 +818,63 @@ describe('Calendar week and month helpers', () => {
     expect(augCells[0].other).toBe(true);
   });
 });
+
+// ---- Database legacy migration ----
+describe('Database legacy migration', () => {
+  test('openDb safely migrates a legacy users table without the theme column and allows setTheme to succeed', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'club-dash-db-'));
+    const dbFile = path.join(tmpDir, 'legacy.db');
+
+    try {
+      // Create a legacy database schema missing the `theme` column
+      const legacy = new Database(dbFile);
+      legacy.exec(`
+        CREATE TABLE users (
+          member_id TEXT PRIMARY KEY,
+          full_name TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('admin','user')),
+          pw_hash TEXT,
+          pw_salt TEXT,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE sessions (
+          token_hash TEXT PRIMARY KEY,
+          member_id TEXT NOT NULL REFERENCES users(member_id) ON DELETE CASCADE,
+          expires_at INTEGER NOT NULL
+        );
+      `);
+      legacy
+        .prepare('INSERT INTO users (member_id, full_name, role, created_at) VALUES (?,?,?,?)')
+        .run('MOCK-66-0001', 'Aiden Adams', 'admin', 1700000000000);
+      legacy.close();
+
+      // openDb must migrate `users` by adding `theme` without dropping existing rows
+      const migrated = openDb(dbFile);
+      try {
+        const uBefore = migrated.getUser('MOCK-66-0001');
+        expect(uBefore).not.toBeNull();
+        expect(uBefore?.full_name).toBe('Aiden Adams');
+        expect(uBefore?.theme).toBeNull();
+
+        migrated.setTheme('MOCK-66-0001', 'dark');
+        expect(migrated.getUser('MOCK-66-0001')?.theme).toBe('dark');
+        expect(migrated.listUsers()[0].theme).toBe('dark');
+
+        migrated.setTheme('MOCK-66-0001', 'light');
+        expect(migrated.getUser('MOCK-66-0001')?.theme).toBe('light');
+      } finally {
+        migrated.close();
+      }
+
+      // Verify column exists via PRAGMA table_info(users)
+      const verify = new Database(dbFile);
+      const cols = verify.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+      verify.close();
+      expect(cols.some((c) => c.name === 'theme')).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 

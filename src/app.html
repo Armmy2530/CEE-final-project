@@ -1,11 +1,24 @@
 <!doctype html>
-<html lang="th" data-theme="%sveltekit.theme%">
+<html lang="th" data-theme="%sveltekit.theme%" data-theme-pref="%sveltekit.themePref%">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>ACADEMIC AC - Club Activity Dashboard</title>
+    <title>Club Dashboard</title>
     <link rel="icon" href="%sveltekit.assets%/image/academic-ac-logo.png" />
+    <script nonce="%sveltekit.nonce%">
+      try {
+        var root = document.documentElement;
+        if (root.getAttribute('data-theme-pref') !== '1') {
+          var saved = localStorage.getItem('theme');
+          if (saved === 'light' || saved === 'dark') {
+            root.setAttribute('data-theme', saved);
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            root.setAttribute('data-theme', 'dark');
+          }
+        }
+      } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
     <link
