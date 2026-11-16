@@ -20,10 +20,13 @@ The team chose **OpenRouter** (`https://openrouter.ai/api/v1/chat/completions`) 
      - `http-referer: ${env.PUBLIC_APP_URL || 'http://localhost:3000'}`
      - `x-title: Club Dashboard`
    - Send an OpenAI-compatible payload:
-     - `model`, `max_tokens: 500`, `temperature: 0.2`
+     - `model`, `max_tokens: Number(env.OPENROUTER_MAX_TOKENS) || 2048`, `temperature: 0.2`
      - `messages`: `[{ role: 'system', content: SYSTEM(buildContext(dash)) }, ...history.slice(-6), { role: 'user', content: message }]`
    - Parse `json.choices?.[0]?.message?.content?.trim()`, supporting both plain string `content` and array-of-parts content blocks returned by multimodal/provider adapters.
-   - Enforce a 20-second `AbortSignal.timeout(20000)` and throw on non-2xx responses or empty replies so the route can fall back cleanly.
+   - If `content` is empty after trimming, check for an HTTP 200 `{ error: { message } }` upstream failure payload and throw it; otherwise fall back to `message.reasoning` / `message.reasoning_content` (e.g., when a reasoning model hits `finish_reason: "length"`).
+   - Enforce a 30-second `AbortSignal.timeout(30000)` and throw on non-2xx responses or empty replies so the route can fall back cleanly.
+
+   > **Reasoning-Model Token Budget Note (2026-11-17):** Reasoning models such as `z-ai/glm-5.3-flash` count internal `reasoning_tokens` toward `max_tokens`. The earlier `500`-token cap caused `finish_reason: "length"` before any visible `content` was emitted. Raising the default `max_tokens` to `2048` (overridable via `OPENROUTER_MAX_TOKENS`) and the timeout to `30s` ensures reasoning models have sufficient budget to complete their answer, while the `reasoning` / `reasoning_content` fallback prevents partial reasoning responses from failing as empty.
 
 2. **Provider Priority & Graceful Fallback (`src/routes/api/chat/+server.ts`):**
    - Prioritize `OPENROUTER_API_KEY` whenever configured.

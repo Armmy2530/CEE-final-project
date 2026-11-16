@@ -75,6 +75,7 @@ export async function askOpenRouter({
   const apiKey = env.OPENROUTER_API_KEY || '';
   const model = env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
   const url = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_URL;
+  const maxTokens = Number(env.OPENROUTER_MAX_TOKENS) || 2048;
   const messages = [
     { role: 'system' as const, content: SYSTEM(buildContext(dash)) },
     ...history.slice(-6),
@@ -91,24 +92,29 @@ export async function askOpenRouter({
     },
     body: JSON.stringify({
       model,
-      max_tokens: 500,
+      max_tokens: maxTokens,
       temperature: 0.2,
       messages
     }),
-    signal: AbortSignal.timeout(20000)
+    signal: AbortSignal.timeout(30000)
   });
 
   if (!res.ok) throw new Error(`OpenRouter API responded ${res.status}`);
 
   const json = (await res.json()) as {
+    error?: { message?: string };
     choices?: Array<{
+      finish_reason?: string | null;
       message?: {
         content?: string | Array<{ type?: string; text?: string }> | null;
+        reasoning?: string | null;
+        reasoning_content?: string | null;
       };
     }>;
   };
 
-  const raw = json.choices?.[0]?.message?.content;
+  const choice = json.choices?.[0];
+  const raw = choice?.message?.content;
   let reply = '';
   if (typeof raw === 'string') {
     reply = raw.trim();
@@ -117,6 +123,17 @@ export async function askOpenRouter({
       .map((part) => (typeof part?.text === 'string' ? part.text : ''))
       .join('\n')
       .trim();
+  }
+  if (!reply) {
+    if (json.error?.message) {
+      throw new Error(json.error.message);
+    }
+    const reasoning = [choice?.message?.reasoning, choice?.message?.reasoning_content]
+      .find((r): r is string => typeof r === 'string' && r.trim().length > 0)
+      ?.trim();
+    if (reasoning) {
+      reply = reasoning;
+    }
   }
   if (!reply) throw new Error('OpenRouter API returned an empty response');
   return reply;
