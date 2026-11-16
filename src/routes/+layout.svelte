@@ -17,6 +17,7 @@
     theme = t;
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('data-theme', t);
+      document.documentElement.classList.toggle('dark', t === 'dark');
     }
   }
 
@@ -24,7 +25,7 @@
     if (!data.hasThemePref) {
       let saved: string | null = null;
       try {
-        saved = localStorage.getItem('theme');
+        saved = localStorage.getItem('theme') || localStorage.getItem('clubhouse-theme');
       } catch {
         saved = null;
       }
@@ -32,6 +33,8 @@
         applyTheme(saved);
       } else if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
         applyTheme('dark');
+      } else {
+        applyTheme('light');
       }
     } else {
       applyTheme(data.initialTheme);
@@ -46,6 +49,7 @@
       applyTheme(t);
       try {
         localStorage.setItem('theme', t);
+        localStorage.setItem('clubhouse-theme', t);
       } catch {
         // ignore storage errors
       }

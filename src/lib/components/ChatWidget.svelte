@@ -12,35 +12,29 @@
   let open = $state(false);
   let input = $state('');
   let asking = $state(false);
-  let chatMode = $state('Ask about club & sheet data');
+  let chatMode = $state('Knows your club data');
   let history = $state<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   let messages = $state<ChatBubble[]>([]);
-  let logEl = $state<HTMLDivElement | null>(null);
+  let contentEl = $state<HTMLDivElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let fabEl = $state<HTMLButtonElement | null>(null);
 
   const CHIPS = [
-    'Budget status',
+    'How much of our budget is left?',
+    'Which event had the most attendees?',
     'Spending by category',
-    'Upcoming events',
-    'Best attendance',
     'AC-002',
     'จำนวนสมาชิก'
   ];
 
   $effect(() => {
-    messages = [
-      {
-        who: 'bot',
-        text: `Hi ${firstName}! Ask me about members, projects (e.g. AC-002), attendance, or spending categories.`
-      }
-    ];
+    messages = [];
     history = [];
   });
 
   function scrollBottom() {
     queueMicrotask(() => {
-      if (logEl) logEl.scrollTop = logEl.scrollHeight;
+      if (contentEl) contentEl.scrollTop = contentEl.scrollHeight;
     });
   }
 
@@ -92,28 +86,26 @@
 
 <button
   id="chatFab"
-  class="chat-fab"
+  class="assistant-fab"
   type="button"
-  aria-label="Open AI assistant"
+  aria-label="Open Clubhouse assistant"
   aria-expanded={open}
   bind:this={fabEl}
   onclick={() => toggleOpen(!open)}
 >
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M4 5h16v11H9l-5 4V5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-  </svg>
+  <span aria-hidden="true">&#10022;</span>
 </button>
 
 {#if open}
-  <div id="chatPanel" class="chat-panel" role="dialog" aria-label="AI assistant">
-    <div class="chat-head">
+  <div id="chatPanel" class="assistant-panel" role="dialog" aria-label="Clubhouse assistant">
+    <div class="assistant-head">
+      <span class="assistant-spark" aria-hidden="true">&#10022;</span>
       <div>
-        <strong>Club assistant</strong>
+        <b>Clubhouse assistant</b>
         <small id="chatMode">{chatMode}</small>
       </div>
       <button
         id="chatClose"
-        class="icon-btn"
         type="button"
         aria-label="Close assistant"
         onclick={() => toggleOpen(false)}
@@ -122,21 +114,32 @@
       </button>
     </div>
 
-    <div id="chatLog" class="chat-log" aria-live="polite" bind:this={logEl}>
-      {#each messages as m}
-        <div class={`msg ${m.who}`} class:typing={m.typing}>{m.text}</div>
-      {/each}
-    </div>
+    <div class="assistant-content" bind:this={contentEl}>
+      <div class="assistant-greeting">
+        <b>Hi {firstName}, how can I help?</b>
+        <p>Ask me about events, members, attendance, or your budget.</p>
+      </div>
 
-    <div id="chatChips" class="chat-chips">
-      {#each CHIPS as c}
-        <button type="button" onclick={() => ask(c)}>{c}</button>
-      {/each}
+      <div id="chatChips" class="suggestions-grid">
+        {#each CHIPS as c}
+          <button type="button" class="suggestion" onclick={() => ask(c)}>
+            {c} <span aria-hidden="true">&#8599;</span>
+          </button>
+        {/each}
+      </div>
+
+      <div id="chatLog" class="chat-messages" aria-live="polite">
+        {#each messages as m}
+          <div class="chat-bubble" class:user={m.who === 'user'} class:typing={m.typing}>
+            {m.text}
+          </div>
+        {/each}
+      </div>
     </div>
 
     <form
       id="chatForm"
-      class="chat-form"
+      class="assistant-input"
       onsubmit={(ev) => {
         ev.preventDefault();
         ask(input);
@@ -145,13 +148,13 @@
       <input
         id="chatInput"
         maxlength="500"
-        placeholder="Ask a question..."
+        placeholder="Ask about your club..."
         autocomplete="off"
-        aria-label="Your question"
+        aria-label="Ask the assistant"
         bind:this={inputEl}
         bind:value={input}
       />
-      <button class="btn primary" type="submit" disabled={asking}>Send</button>
+      <button type="submit" aria-label="Send message" disabled={asking}>&#8593;</button>
     </form>
   </div>
 {/if}

@@ -2,17 +2,26 @@
   import BarChart from './BarChart.svelte';
   import { baht, fmtDate, fmtRange, pct, projectDaysOf } from '$lib/format';
   import { rank } from '$lib/search';
-  import type { DashboardPayload, ProjectSummary } from '$lib/types';
+  import type { DashboardPayload, ProjectCategory, ProjectSummary } from '$lib/types';
+  import type { PageId } from './Topbar.svelte';
 
   let {
     dash,
-    selectedProjectId = $bindable<string | null>(null)
+    selectedProjectId = $bindable<string | null>(null),
+    refreshing = false,
+    onRefresh,
+    onSelectPage
   }: {
     dash: DashboardPayload | null;
     selectedProjectId?: string | null;
+    refreshing?: boolean;
+    onRefresh?: () => void;
+    onSelectPage?: (page: PageId) => void;
   } = $props();
 
   let query = $state('');
+  let statusFilter = $state<'all' | ProjectSummary['status']>('all');
+  let categoryFilter = $state<'all' | ProjectCategory>('all');
   let sortBy = $state<'relevance' | 'newest' | 'oldest' | 'name'>('relevance');
   let groupBy = $state<'gender' | 'year' | 'major'>('gender');
   let imgFailed = $state(false);
@@ -24,10 +33,18 @@
     Completed: 'ปิดโครงการ',
     Cancelled: 'ยกเลิก'
   };
+
   const STATUS_EN: Record<ProjectSummary['status'], string> = {
     Scheduled: 'In progress',
-    Completed: 'Closed',
+    Completed: 'Completed',
     Cancelled: 'Cancelled'
+  };
+
+  const CATEGORY_ICON: Record<ProjectCategory, string> = {
+    Academic: '✳',
+    Social: '♡',
+    Community: '⌁',
+    Operations: '◧'
   };
 
   const selectedProject = $derived.by(() => {
@@ -49,14 +66,22 @@
 
   const filteredList = $derived.by(() => {
     if (!dash) return [] as ProjectSummary[];
-    const all = dash.events.slice();
+    let pool = dash.events.slice();
+    if (statusFilter !== 'all') {
+      pool = pool.filter((e) => e.status === statusFilter);
+    }
+    if (categoryFilter !== 'all') {
+      pool = pool.filter((e) => e.category === categoryFilter);
+    }
     const byDateDesc = (a: ProjectSummary, b: ProjectSummary) => b.date.localeCompare(a.date);
     if (sortBy === 'relevance') {
       return query.trim()
-        ? rank(all, query, (e) => e.title, (e) => e.date)
-        : all.sort(byDateDesc);
+        ? rank(pool, query, (e) => `${e.title} ${e.event_id} ${e.lead.name} ${e.category}`, (e) => e.date)
+        : pool.sort(byDateDesc);
     }
-    const items = query.trim() ? rank(all, query, (e) => e.title).slice() : all;
+    const items = query.trim()
+      ? rank(pool, query, (e) => `${e.title} ${e.event_id} ${e.lead.name} ${e.category}`).slice()
+      : pool;
     if (sortBy === 'newest') items.sort(byDateDesc);
     else if (sortBy === 'oldest') items.sort((a, b) => a.date.localeCompare(b.date));
     else items.sort((a, b) => a.title.localeCompare(b.title, 'th'));
@@ -66,19 +91,43 @@
   const countText = $derived.by(() => {
     const total = dash?.events.length ?? 0;
     const q = query.trim();
-    return q ? `${filteredList.length} of ${total} projects match "${q}"` : `${total} projects`;
+    if (q || statusFilter !== 'all' || categoryFilter !== 'all') {
+      return `${filteredList.length} of ${total} projects shown`;
+    }
+    return `${total} projects`;
   });
+
+  const inProgressCount = $derived(dash?.events.filter((e) => e.status === 'Scheduled').length ?? 0);
+  const completedCount = $derived(dash?.events.filter((e) => e.status === 'Completed').length ?? 0);
+  const budgetAlertCount = $derived(
+    dash?.alerts.filter((a) => a.type === 'budget').length ?? 0
+  );
 
   function openProject(id: string) {
     selectedProjectId = id;
     imgFailed = false;
-    window.scrollTo(0, 0);
+    if (typeof window !== 'undefined') window.scrollTo(0, 0);
     queueMicrotask(() => backBtn?.focus());
   }
 
   function closeProject() {
     selectedProjectId = null;
     queueMicrotask(() => searchInput?.focus());
+  }
+
+  function statusPillClass(status: ProjectSummary['status']): string {
+    if (status === 'Scheduled') return 'progress';
+    if (status === 'Completed') return 'completed';
+    return 'cancelled';
+  }
+
+  function progressValue(ev: ProjectSummary): number {
+    if (ev.stats.attendanceRate != null) {
+      return Math.min(100, Math.round(ev.stats.attendanceRate * 100));
+    }
+    if (ev.status === 'Completed') return 100;
+    if (ev.pct != null) return Math.min(100, Math.round(ev.pct * 100));
+    return 0;
   }
 
   const breakdownKeys = $derived.by(() => {
@@ -93,70 +142,237 @@
 <section id="projects" class="page-content">
   {#if !selectedProject}
     <div id="projectList">
-      <div class="page-heading">
-        <h1>Project data</h1>
-        <p>Search for a project, then open it to see its details</p>
+      <div class="page-heading projects-heading">
+        <div>
+          <p class="eyebrow">WORKSPACE <span class="heading-dot">&middot;</span> PROJECTS</p>
+          <h1>Project data</h1>
+          <p class="subheading">All your club projects, organized in one place.</p>
+        </div>
+        {#if onRefresh}
+          <button
+            type="button"
+            class="button button-primary"
+            disabled={refreshing}
+            onclick={onRefresh}
+          >
+            <span aria-hidden="true">&#8635;</span> {refreshing ? 'Syncing...' : 'Sync data'}
+          </button>
+        {/if}
+      </div>
+
+      <div class="main-tabs" role="tablist" aria-label="Dashboard sections">
+        <button
+          type="button"
+          class="main-tab"
+          role="tab"
+          aria-selected="false"
+          onclick={() => onSelectPage?.('summary')}
+        >
+          Summary
+        </button>
+        <button
+          type="button"
+          class="main-tab selected"
+          role="tab"
+          aria-selected="true"
+          onclick={() => onSelectPage?.('projects')}
+        >
+          Project data <span class="tab-badge">{dash?.events.length ?? 0}</span>
+        </button>
+      </div>
+
+      <div class="project-overview">
+        <div>
+          <span class="overview-label">TOTAL PROJECTS</span>
+          <b>{dash?.events.length ?? 0}</b>
+        </div>
+        <div>
+          <span class="overview-label">IN PROGRESS</span>
+          <b>{inProgressCount}</b>
+        </div>
+        <div>
+          <span class="overview-label">COMPLETED</span>
+          <b>{completedCount}</b>
+        </div>
+        <div>
+          <span class="overview-label">TOTAL BUDGET</span>
+          <b>{dash ? baht(dash.metrics.budgetPlanned) : '—'}</b>
+        </div>
+        <div class="overview-note">
+          <span class="note-icon" class:warn={budgetAlertCount > 0} aria-hidden="true">
+            {budgetAlertCount > 0 ? '!' : '↗'}
+          </span>
+          <span>
+            <b>
+              {budgetAlertCount > 0
+                ? `${budgetAlertCount} budget ${budgetAlertCount === 1 ? 'alert' : 'alerts'} active`
+                : "You're on track"}
+            </b>
+            <small>
+              {inProgressCount} scheduled &middot; {completedCount} completed this academic cycle
+            </small>
+          </span>
+        </div>
       </div>
 
       <div class="project-toolbar">
         <div class="search-box">
-          <label class="sr-only" for="projectSearch">Search projects by name</label>
-          <svg class="search-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <circle cx="9" cy="9" r="6" stroke="currentColor" stroke-width="2" />
-            <path d="M14 14l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-          </svg>
+          <span aria-hidden="true">&#8981;</span>
+          <label class="sr-only" for="projectSearch">Search projects</label>
           <input
             id="projectSearch"
             type="search"
-            placeholder="Search box - type a project name"
+            placeholder="Search projects..."
             autocomplete="off"
             bind:this={searchInput}
             bind:value={query}
           />
         </div>
-        <div class="sort-box">
-          <label for="projectSort">Sort</label>
-          <select id="projectSort" bind:value={sortBy}>
+
+        <div class="filter-actions">
+          <select id="status-filter" aria-label="Filter by status" bind:value={statusFilter}>
+            <option value="all">All status</option>
+            <option value="Scheduled">Scheduled ({inProgressCount})</option>
+            <option value="Completed">Completed ({completedCount})</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+
+          <select id="category-filter" aria-label="Filter by category" bind:value={categoryFilter}>
+            <option value="all">All categories</option>
+            <option value="Academic">Academic</option>
+            <option value="Social">Social</option>
+            <option value="Community">Community</option>
+            <option value="Operations">Operations</option>
+          </select>
+
+          <select id="projectSort" aria-label="Sort projects" bind:value={sortBy}>
             <option value="relevance">Best match</option>
             <option value="newest">Newest first</option>
             <option value="oldest">Oldest first</option>
-            <option value="name">Name A-Z</option>
+            <option value="name">Name A–Z</option>
           </select>
         </div>
       </div>
 
       <p id="projectCount" class="hint" aria-live="polite">{countText}</p>
 
-      <div id="projectCards" class="project-cards">
+      <div class="table-wrap">
         {#if !filteredList.length}
-          <div class="empty-card">
-            <p>No project matches "{query.trim()}".</p>
+          <div class="empty-state">
+            <p>No projects match your current filters.</p>
             <button
               class="btn small"
               type="button"
               onclick={() => {
                 query = '';
+                statusFilter = 'all';
+                categoryFilter = 'all';
                 searchInput?.focus();
               }}
             >
-              Clear search
+              Reset filters
             </button>
           </div>
         {:else}
-          {#each filteredList as ev (ev.event_id)}
-            <button
-              type="button"
-              class="pcard"
-              aria-label={`${ev.title}, ${fmtRange(ev)}, ${STATUS_EN[ev.status] || ev.status}`}
-              onclick={() => openProject(ev.event_id)}
-            >
-              <span class="pcard-title">{ev.title}</span>
-              <span class="pcard-date">&bull; {fmtRange(ev)}</span>
-              <span class={`badge st-${ev.status}`} title={STATUS_EN[ev.status] || ev.status}>
-                {STATUS_TH[ev.status] || ev.status}
-              </span>
-            </button>
-          {/each}
+          <div class="table-scroll">
+            <table class="project-table">
+              <thead>
+                <tr>
+                  <th>PROJECT</th>
+                  <th>LEAD</th>
+                  <th>STATUS</th>
+                  <th>ATTENDANCE / PROGRESS</th>
+                  <th>BUDGET (ACTUAL / PLAN)</th>
+                  <th>DATE</th>
+                  <th class="right">ACTION</th>
+                </tr>
+              </thead>
+              <tbody id="project-rows">
+                {#each filteredList as ev (ev.event_id)}
+                  {@const prog = progressValue(ev)}
+                  <tr class="clickable-row" onclick={() => openProject(ev.event_id)}>
+                    <td>
+                      <div class="project-title-cell">
+                        <span class={`table-project-icon ${ev.category.toLowerCase()}`}>
+                          {CATEGORY_ICON[ev.category]}
+                        </span>
+                        <span>
+                          <span class="project-name">{ev.title}</span>
+                          <span class="project-category">{ev.event_id} &middot; {ev.category}</span>
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="lead-cell">
+                        <span class="lead-avatar">{ev.lead.initials}</span>
+                        <span class="lead-name">{ev.lead.name}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span class={`status-pill ${statusPillClass(ev.status)}`}>
+                        {STATUS_EN[ev.status]}
+                      </span>
+                    </td>
+                    <td class="progress-cell">
+                      <div class="progress-meta">
+                        <span>{ev.attendees} attended</span>
+                        <b>{prog}%</b>
+                      </div>
+                      <div class="table-progress">
+                        <i style={`width:${prog}%`}></i>
+                      </div>
+                    </td>
+                    <td class="budget-cell">
+                      {baht(ev.actual)} <span class="muted">/ {baht(ev.budget_planned)}</span>
+                    </td>
+                    <td class="due-cell">{fmtRange(ev)}</td>
+                    <td class="right">
+                      <button
+                        type="button"
+                        class="row-more"
+                        aria-label={`Open ${ev.title}`}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          openProject(ev.event_id);
+                        }}
+                      >
+                        Open &rarr;
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <div class="table-footer">
+            <span>Showing <b>{filteredList.length}</b> of {dash?.events.length ?? 0} projects</span>
+            <span>Click any row to open full project breakdown</span>
+          </div>
+        {/if}
+      </div>
+
+      <div class="data-source-note">
+        <span class="source-icon" aria-hidden="true">&#9636;</span>
+        <span>
+          <b>
+            {dash?.meta?.source === 'google'
+              ? 'Connected to Google Sheets'
+              : 'Connected to normalized Mock-Data CSVs'}
+          </b>
+          <small>
+            Last synced{' '}
+            {dash?.meta?.fetchedAt
+              ? new Date(dash.meta.fetchedAt).toLocaleTimeString('en-GB', {
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })
+              : 'just now'}
+          </small>
+        </span>
+        {#if onRefresh}
+          <button type="button" id="sync-btn" disabled={refreshing} onclick={onRefresh}>
+            &#8635; {refreshing ? 'Syncing...' : 'Sync now'}
+          </button>
         {/if}
       </div>
     </div>
@@ -166,15 +382,16 @@
     {@const gMap = ev.breakdown[groupBy] || {}}
     <div id="projectDetail">
       <div class="detail-top">
-        <button class="btn back-btn" type="button" bind:this={backBtn} onclick={closeProject}>
+        <button class="btn" type="button" bind:this={backBtn} onclick={closeProject}>
           &larr; All projects
         </button>
+        <span class="muted">{ev.event_id} &middot; {ev.category}</span>
       </div>
 
       <!-- 1) Name / picture / detail / location / status / date / planned budget -->
       <article class="card pd-head">
         <div class="pd-title">
-          <span class="avatar big" aria-hidden="true">
+          <span class="pd-avatar" aria-hidden="true">
             {#if ev.image_url && !imgFailed}
               <img
                 src={ev.image_url}
@@ -189,9 +406,13 @@
           </span>
           <div>
             <h1>{ev.title}</h1>
-            <span class={`badge st-${ev.status}`} title={STATUS_EN[ev.status] || ev.status}>
-              {STATUS_TH[ev.status] || ev.status}
-            </span>
+            <div class="pd-badges">
+              <span class={`badge st-${ev.status}`} title={STATUS_EN[ev.status] || ev.status}>
+                {STATUS_TH[ev.status] || ev.status} ({STATUS_EN[ev.status]})
+              </span>
+              <span class="badge">{ev.category}</span>
+              <span class="badge">Lead: {ev.lead.name}</span>
+            </div>
           </div>
         </div>
         <p class="pd-detail">{ev.description || 'No description yet.'}</p>
@@ -225,7 +446,9 @@
             <span class="stat-label">Attended</span>
             <strong>{ev.stats.attended}</strong>
             <small>
-              {ev.stats.attendanceRate == null ? 'no check-ins yet' : `${pct(ev.stats.attendanceRate)} of participants`}
+              {ev.stats.attendanceRate == null
+                ? 'no check-ins yet'
+                : `${pct(ev.stats.attendanceRate)} of participants`}
             </small>
           </div>
           <div class="stat">
@@ -350,7 +573,7 @@
                 <thead>
                   <tr>
                     <th>{groupBy.charAt(0).toUpperCase() + groupBy.slice(1)}</th>
-                    <th>Attendees</th>
+                    <th class="right">Attendees</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -396,7 +619,7 @@
           <div id="pdBudTable">
             <table class="data-table">
               <thead>
-                <tr><th></th><th>Amount</th></tr>
+                <tr><th>Metric</th><th class="right">Amount</th></tr>
               </thead>
               <tbody>
                 <tr><td>Planned</td><td class="num">{baht(ev.budget_planned)}</td></tr>

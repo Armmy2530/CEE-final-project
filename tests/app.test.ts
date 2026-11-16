@@ -221,12 +221,34 @@ describe('Mock-Data CSV & dashboard aggregation', () => {
       expect(proj.actual).toBe(proj.expenses.reduce((s, x) => s + x.amount, 0));
     }
 
-    // Staff project roles preserved
+    // Staff project roles preserved & lead/category enrichment
     const ac1 = dash.events.find((e) => e.event_id === 'AC-001')!;
     expect(ac1.staff.some((s) => s.role === 'President')).toBe(true);
     expect(ac1.location).toBe('Eng 3 Building, Room 301');
+    expect(ac1.lead.name).toBeTruthy();
+    expect(ac1.lead.initials).toMatch(/^[A-Z]{1,2}$/);
+    expect(ac1.category).toBe('Academic');
 
-    // Empty attendance event still handles empty breakdowns cleanly
+    const ac2 = dash.events.find((e) => e.event_id === 'AC-002')!;
+    expect(ac2.category).toBe('Community');
+
+    // Enriched Clubhouse DashboardPayload fields
+    expect(dash.metrics.activeMembers).toBe(55);
+    expect(dash.members).toHaveLength(67);
+    expect(dash.membersByStatus).toEqual({ Active: 55, 'On leave': 8, Graduating: 4 });
+    expect(dash.membersByGender).toEqual({ Male: 39, Female: 28 });
+    expect(sumVals(dash.membersByYear)).toBe(67);
+    expect(JSON.stringify(dash.members)).not.toMatch(/@|email|phone/i);
+    expect('email' in dash.members[0]).toBe(false);
+
+    // 126 transactions sorted newest date first with resolved event_title
+    expect(dash.transactions).toHaveLength(126);
+    expect(dash.transactions[0].event_title).toBeTruthy();
+    for (let i = 1; i < dash.transactions.length; i++) {
+      expect(dash.transactions[i - 1].date >= dash.transactions[i].date).toBe(true);
+    }
+
+    // Empty attendance event still handles empty breakdowns cleanly & fallback lead
     const custom = {
       ...data,
       Events: [
@@ -245,7 +267,9 @@ describe('Mock-Data CSV & dashboard aggregation', () => {
       ]
     };
     const dash2 = buildDashboard(custom, today);
-    expect(dash2.events.find((e) => e.event_id === 'AC-999')!.breakdown.gender).toEqual({});
+    const ac999 = dash2.events.find((e) => e.event_id === 'AC-999')!;
+    expect(ac999.breakdown.gender).toEqual({});
+    expect(ac999.lead).toEqual({ member_id: '', name: 'Club Team', role: 'Organizer', initials: 'CT' });
   });
 });
 

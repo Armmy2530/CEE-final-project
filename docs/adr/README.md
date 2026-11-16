@@ -10,3 +10,4 @@ This directory records the major architectural and product decisions for **Club 
 | [0004](./0004-calendar-week-and-month-views.md) | Google Calendar-Style Week & Month Views with Project Navigation | Accepted | 2026-11-16 | Pure calendar math (`calendar.ts`), Month/Week views, project navigation |
 | [0005](./0005-branding-and-db-theme-preference.md) | Club Dashboard Rebranding & DB-Persisted Theme Preference | Accepted | 2026-11-16 | `Club Dashboard` branding, legacy DB migration, 3-layer theme sync |
 | [0006](./0006-idempotent-admin-seeding.md) | Idempotent Member Seeding, Admin Promotion & Node/Bun Compatibility | Accepted | 2026-11-16 | Cross-runtime `mock.ts`/`db.ts`, idempotent `seedFromMembers`, `MOCK-66-0001` promotion |
+| [0007](./0007-clubhouse-ui-redesign.md) | Clubhouse UI/UX Redesign with Real Mock-Data Views | Accepted | 2026-11-17 | `clubhouse.` design system, sidebar rail, enriched `DashboardPayload`, Members & Budget views |

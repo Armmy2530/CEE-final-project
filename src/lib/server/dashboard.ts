@@ -1,6 +1,12 @@
 // Aggregates normalized sheet tabs into the dashboard payload.
 import { buildAlerts, type Alert } from './alerts';
 import type { AttendanceRecord, EventRecord, MemberRecord, SheetData } from './sheets';
+import type {
+  DashboardMember,
+  DashboardTransaction,
+  ProjectCategory,
+  ProjectLead
+} from '../types';
 
 const ATTENDED = new Set(['Present', 'Late']);
 
@@ -24,6 +30,8 @@ export interface ProjectSummary extends EventRecord {
   attendees: number;
   records: number;
   days: number;
+  lead: ProjectLead;
+  category: ProjectCategory;
   staff: ProjectPerson[];
   participants: ProjectPerson[];
   stats: {
@@ -41,6 +49,7 @@ export interface DashboardPayload {
   today: string;
   metrics: {
     members: number;
+    activeMembers: number;
     events: number;
     eventsByStatus: Record<string, number>;
     budgetActual: number;
@@ -49,8 +58,13 @@ export interface DashboardPayload {
     budgetPct: number | null;
   };
   events: ProjectSummary[];
+  members: DashboardMember[];
+  transactions: DashboardTransaction[];
   budgetByCategory: Record<string, number>;
   membersByDepartment: Record<string, number>;
+  membersByYear: Record<string, number>;
+  membersByGender: Record<string, number>;
+  membersByStatus: Record<string, number>;
   alerts: Alert[];
   meta?: {
     source: 'mock' | 'google';
@@ -66,6 +80,54 @@ function countBy<T>(items: T[], keyFn: (item: T) => string): Record<string, numb
     out[k] = (out[k] || 0) + 1;
   }
   return out;
+}
+
+function initialsOf(name: string): string {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return 'CT';
+  return parts
+    .slice(0, 2)
+    .map((p) => p[0])
+    .join('')
+    .toUpperCase();
+}
+
+function deriveProjectLead(staff: ProjectPerson[]): ProjectLead {
+  if (!staff.length) {
+    return { member_id: '', name: 'Club Team', role: 'Organizer', initials: 'CT' };
+  }
+  const preferred =
+    staff.find((s) => /president|lead|head|coordinator|secretary|treasurer/i.test(s.role)) || staff[0];
+  return {
+    member_id: preferred.member_id,
+    name: preferred.name,
+    role: preferred.role || 'Organizer',
+    initials: initialsOf(preferred.name)
+  };
+}
+
+function deriveProjectCategory(ev: EventRecord): ProjectCategory {
+  const text = `${ev.title || ''} ${ev.description || ''}`;
+  if (/orientation|board|meeting|club|equipment|care package/i.test(text)) {
+    return 'Operations';
+  }
+  if (/open house|volunteer|outreach|alumni|fair|charity|industrial visit|study abroad|scholarship/i.test(text)) {
+    return 'Community';
+  }
+  if (
+    /tutoring|calculus|physics|circuit|exam|bootcamp|matlab|cad|solidworks|seminar|workshop|contest|quiz|study|lecture|research|python|arduino|iot|analytics|robotics|technical|bridge course/i.test(
+      text
+    )
+  ) {
+    return 'Academic';
+  }
+  if (/camp/i.test(text)) {
+    return 'Community';
+  }
+  return 'Social';
 }
 
 function buildProject(
@@ -131,6 +193,8 @@ function buildProject(
       1,
       (Date.parse(`${ev.end_date || ev.date}T00:00:00Z`) - Date.parse(`${ev.date}T00:00:00Z`)) / 86400000 + 1
     ),
+    lead: deriveProjectLead(staff),
+    category: deriveProjectCategory(ev),
     staff,
     participants,
     stats: {
@@ -148,6 +212,7 @@ function buildProject(
 export function buildDashboard(data: SheetData, today: string): DashboardPayload {
   const members = data.Members;
   const membersById = new Map(members.map((m) => [m.member_id, m]));
+  const eventsById = new Map(data.Events.map((e) => [e.event_id, e]));
   const perEvent = data.Events.map((ev) => buildProject(ev, data, membersById, today));
 
   const byStatus: Record<string, number> = {};
@@ -167,12 +232,56 @@ export function buildDashboard(data: SheetData, today: string): DashboardPayload
   for (const b of expenseRows) byCategory[b.category] = (byCategory[b.category] || 0) + b.amount;
 
   const deptCounts: Record<string, number> = {};
-  for (const m of members) deptCounts[m.department] = (deptCounts[m.department] || 0) + 1;
+  const yearCounts: Record<string, number> = {};
+  const genderCounts: Record<string, number> = {};
+  const statusCounts: Record<string, number> = {};
+  let hasMemberStatus = false;
+  let activeMemberCount = 0;
+
+  const safeMembers: DashboardMember[] = members.map((m) => {
+    const dept = m.department || 'General Members';
+    deptCounts[dept] = (deptCounts[dept] || 0) + 1;
+
+    const yr = m.year ? `Year ${m.year}` : 'Unknown';
+    yearCounts[yr] = (yearCounts[yr] || 0) + 1;
+
+    const gen = m.gender || 'Unknown';
+    genderCounts[gen] = (genderCounts[gen] || 0) + 1;
+
+    if (m.member_status) hasMemberStatus = true;
+    const mStatus = m.member_status || 'Active';
+    statusCounts[mStatus] = (statusCounts[mStatus] || 0) + 1;
+    if (mStatus.toLowerCase() === 'active') activeMemberCount++;
+
+    return {
+      member_id: m.member_id,
+      full_name: m.full_name,
+      department: m.department,
+      role: m.role,
+      joined_date: m.joined_date,
+      gender: m.gender,
+      year: m.year,
+      major: m.major,
+      member_status: m.member_status
+    };
+  });
+
+  const transactions: DashboardTransaction[] = data.Budget.map((b) => ({
+    expense_id: b.expense_id,
+    event_id: b.event_id,
+    event_title: eventsById.get(b.event_id)?.title || b.event_id,
+    type: b.type,
+    category: b.category,
+    amount: b.amount,
+    date: b.date,
+    receipt_ref: b.receipt_ref
+  })).sort((a, b) => b.date.localeCompare(a.date) || b.expense_id.localeCompare(a.expense_id));
 
   return {
     today,
     metrics: {
       members: members.length,
+      activeMembers: hasMemberStatus ? activeMemberCount : members.length,
       events: perEvent.length,
       eventsByStatus: byStatus,
       budgetActual: actualTotal,
@@ -181,8 +290,13 @@ export function buildDashboard(data: SheetData, today: string): DashboardPayload
       budgetPct: plannedAll > 0 ? actualTotal / plannedAll : null
     },
     events: perEvent,
+    members: safeMembers,
+    transactions,
     budgetByCategory: byCategory,
     membersByDepartment: deptCounts,
+    membersByYear: yearCounts,
+    membersByGender: genderCounts,
+    membersByStatus: statusCounts,
     alerts: buildAlerts({ events: perEvent, totals: { planned: plannedActive, actual: actualActive } }, today)
   };
 }
