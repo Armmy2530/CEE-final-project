@@ -375,7 +375,7 @@ describe('Project search and offline chat', () => {
 
     const payload = JSON.parse(String(capturedInit?.body));
     expect(payload.model).toBe('google/gemini-2.5-flash');
-    expect(payload.max_tokens).toBe(500);
+    expect(payload.max_tokens).toBe(2048);
     expect(payload.temperature).toBe(0.2);
     expect(payload.messages[0].role).toBe('system');
     expect(payload.messages[0].content).toContain('"spending_by_category"');
@@ -386,7 +386,7 @@ describe('Project search and offline chat', () => {
       { role: 'user', content: 'How much did AC-002 spend?' }
     ]);
 
-    // Array-of-parts content & custom model/base URL support
+    // Array-of-parts content & custom model/base URL/max_tokens support
     const arrayFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       capturedUrl = String(url);
       capturedInit = init;
@@ -411,7 +411,8 @@ describe('Project search and offline chat', () => {
       env: {
         OPENROUTER_API_KEY: 'sk-or-test-key',
         OPENROUTER_MODEL: 'openai/gpt-4o-mini',
-        OPENROUTER_BASE_URL: 'https://custom-proxy.example/v1/chat/completions'
+        OPENROUTER_BASE_URL: 'https://custom-proxy.example/v1/chat/completions',
+        OPENROUTER_MAX_TOKENS: '4096'
       },
       dash,
       message: 'Summary?',
@@ -420,7 +421,80 @@ describe('Project search and offline chat', () => {
     });
     expect(capturedUrl).toBe('https://custom-proxy.example/v1/chat/completions');
     expect(JSON.parse(String(capturedInit?.body)).model).toBe('openai/gpt-4o-mini');
+    expect(JSON.parse(String(capturedInit?.body)).max_tokens).toBe(4096);
     expect(arrayReply).toBe('Line 1\nLine 2');
+  });
+
+  test('askOpenRouter handles reasoning model fallback and HTTP 200 error payloads', async () => {
+    const dash = buildDashboard(generateMock('2026-11-16'), '2026-11-16');
+
+    const reasoningFetch = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'length',
+              message: {
+                content: '',
+                reasoning: '  Partial reasoning answer for AC-002.  '
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )) as unknown as typeof fetch;
+
+    const reasoningReply = await askOpenRouter({
+      env: { OPENROUTER_API_KEY: 'sk-or-test-key', OPENROUTER_MODEL: 'z-ai/glm-5.3-flash' },
+      dash,
+      message: 'Budget summary?',
+      history: [],
+      fetchImpl: reasoningFetch
+    });
+    expect(reasoningReply).toBe('Partial reasoning answer for AC-002.');
+
+    const reasoningContentFetch = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'length',
+              message: {
+                content: null,
+                reasoning_content: 'Reasoning content fallback.'
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )) as unknown as typeof fetch;
+
+    const reasoningContentReply = await askOpenRouter({
+      env: { OPENROUTER_API_KEY: 'sk-or-test-key', OPENROUTER_MODEL: 'z-ai/glm-5.3-flash' },
+      dash,
+      message: 'Budget summary?',
+      history: [],
+      fetchImpl: reasoningContentFetch
+    });
+    expect(reasoningContentReply).toBe('Reasoning content fallback.');
+
+    const error200Fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          error: { message: 'Upstream provider timed out', code: 504 }
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )) as unknown as typeof fetch;
+
+    await expect(
+      askOpenRouter({
+        env: { OPENROUTER_API_KEY: 'sk-or-test-key' },
+        dash,
+        message: 'Budget summary?',
+        history: [],
+        fetchImpl: error200Fetch
+      })
+    ).rejects.toThrow('Upstream provider timed out');
   });
 });
 
