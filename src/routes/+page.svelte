@@ -16,6 +16,7 @@
 
   let user = $state<SessionUser | null>(null);
   let activePage = $state<PageId>('summary');
+  let selectedProjectId = $state<string | null>(null);
   let dash = $state<DashboardPayload | null>(null);
   let loadError = $state('');
   let refreshing = $state(false);
@@ -147,6 +148,12 @@
     }
   }
 
+  function openProjectFromCalendar(eventId: string) {
+    selectedProjectId = eventId;
+    activePage = 'projects';
+    if (typeof window !== 'undefined') window.scrollTo(0, 0);
+  }
+
   onMount(() => {
     if (user) {
       loadDashboard(false, true);
@@ -167,7 +174,10 @@
       alerts={dash?.alerts ?? []}
       {hasUnread}
       bind:notifOpen
-      onSelectPage={(p) => (activePage = p)}
+      onSelectPage={(p) => {
+        if (p === 'projects') selectedProjectId = null;
+        activePage = p;
+      }}
       onSetTheme={handleSetTheme}
       onMarkSeen={markSeen}
       onLogout={handleLogout}
@@ -180,9 +190,10 @@
           {loadError}
           {refreshing}
           onRefresh={() => loadDashboard(true, false)}
+          onOpenProject={openProjectFromCalendar}
         />
       {:else if activePage === 'projects'}
-        <ProjectsView {dash} />
+        <ProjectsView {dash} bind:selectedProjectId />
       {:else if activePage === 'users' && user.role === 'admin'}
         <UsersView currentUser={user} />
       {/if}

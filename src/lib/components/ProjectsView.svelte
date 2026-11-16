@@ -4,11 +4,16 @@
   import { rank } from '$lib/search';
   import type { DashboardPayload, ProjectSummary } from '$lib/types';
 
-  let { dash }: { dash: DashboardPayload | null } = $props();
+  let {
+    dash,
+    selectedProjectId = $bindable<string | null>(null)
+  }: {
+    dash: DashboardPayload | null;
+    selectedProjectId?: string | null;
+  } = $props();
 
   let query = $state('');
   let sortBy = $state<'relevance' | 'newest' | 'oldest' | 'name'>('relevance');
-  let projectId = $state<string | null>(null);
   let groupBy = $state<'gender' | 'year' | 'major'>('gender');
   let imgFailed = $state(false);
   let searchInput = $state<HTMLInputElement | null>(null);
@@ -26,13 +31,19 @@
   };
 
   const selectedProject = $derived.by(() => {
-    if (!projectId || !dash) return null;
-    return dash.events.find((e) => e.event_id === projectId) ?? null;
+    if (!selectedProjectId || !dash) return null;
+    return dash.events.find((e) => e.event_id === selectedProjectId) ?? null;
   });
 
   $effect(() => {
-    if (projectId && dash && !dash.events.some((e) => e.event_id === projectId)) {
-      projectId = null;
+    if (selectedProjectId && dash && !dash.events.some((e) => e.event_id === selectedProjectId)) {
+      selectedProjectId = null;
+    }
+  });
+
+  $effect(() => {
+    if (selectedProjectId) {
+      imgFailed = false;
     }
   });
 
@@ -59,14 +70,14 @@
   });
 
   function openProject(id: string) {
-    projectId = id;
+    selectedProjectId = id;
     imgFailed = false;
     window.scrollTo(0, 0);
     queueMicrotask(() => backBtn?.focus());
   }
 
   function closeProject() {
-    projectId = null;
+    selectedProjectId = null;
     queueMicrotask(() => searchInput?.focus());
   }
 

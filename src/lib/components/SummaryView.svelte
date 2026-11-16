@@ -1,47 +1,26 @@
 <script lang="ts">
   import BarChart, { type ChartSeries } from './BarChart.svelte';
-  import { baht, fmtDate, pad2, pct, projectDaysOf } from '$lib/format';
+  import Calendar from './Calendar.svelte';
+  import { baht, pct } from '$lib/format';
   import type { DashboardPayload, ProjectSummary } from '$lib/types';
 
   let {
     dash,
     loadError,
     refreshing,
-    onRefresh
+    onRefresh,
+    onOpenProject
   }: {
     dash: DashboardPayload | null;
     loadError: string;
     refreshing: boolean;
     onRefresh: () => void;
+    onOpenProject?: (eventId: string) => void;
   } = $props();
 
   let statusFilter = $state<'all' | 'Completed' | 'Scheduled' | 'Cancelled'>('all');
   let hidePlanned = $state(false);
   let hideActual = $state(false);
-  let calMonth = $state('');
-  let calSelected = $state<string | null>(null);
-
-  const MONTHS = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December'
-  ];
-  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-  $effect(() => {
-    if (dash && !calMonth) {
-      calMonth = dash.today.slice(0, 7);
-    }
-  });
 
   const updatedText = $derived.by(() => {
     if (!dash) return loadError ? 'Data unavailable' : 'Loading...';
@@ -108,71 +87,6 @@
       if (!hideActual && hidePlanned) return;
       hideActual = !hideActual;
     }
-  }
-
-  // Calendar grid computation
-  type CalDayEvent = ProjectSummary & { dayNo: number; dayCount: number };
-
-  const byDate = $derived.by(() => {
-    const map: Record<string, CalDayEvent[]> = {};
-    if (!dash) return map;
-    for (const e of dash.events) {
-      const days = projectDaysOf(e);
-      days.forEach((day, i) => {
-        if (!map[day]) map[day] = [];
-        map[day].push({ ...e, dayNo: i + 1, dayCount: days.length });
-      });
-    }
-    return map;
-  });
-
-  const calTitle = $derived.by(() => {
-    if (!calMonth) return '';
-    const [y, mo] = calMonth.split('-').map(Number);
-    return `${MONTHS[mo - 1]} ${y}`;
-  });
-
-  const calCells = $derived.by(() => {
-    if (!calMonth || !dash) return [];
-    const [y, moNum] = calMonth.split('-').map(Number);
-    const mo = moNum - 1;
-    const first = new Date(Date.UTC(y, mo, 1));
-    const start = new Date(first.getTime() - first.getUTCDay() * 86400000);
-    const cells: Array<{
-      key: string;
-      dayNum: number;
-      other: boolean;
-      today: boolean;
-      selected: boolean;
-      evs: CalDayEvent[];
-    }> = [];
-    for (let i = 0; i < 42; i++) {
-      const dt = new Date(start.getTime() + i * 86400000);
-      if (i >= 35 && dt.getUTCMonth() !== mo) break;
-      const key = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
-      cells.push({
-        key,
-        dayNum: dt.getUTCDate(),
-        other: dt.getUTCMonth() !== mo,
-        today: key === dash.today,
-        selected: key === calSelected,
-        evs: byDate[key] || []
-      });
-    }
-    return cells;
-  });
-
-  function shiftMonth(delta: number) {
-    if (!calMonth) return;
-    const [y, mo] = calMonth.split('-').map(Number);
-    const dt = new Date(Date.UTC(y, mo - 1 + delta, 1));
-    calMonth = `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}`;
-  }
-
-  function jumpToday() {
-    if (!dash) return;
-    calMonth = dash.today.slice(0, 7);
-    calSelected = dash.today;
   }
 </script>
 
@@ -326,87 +240,5 @@
     </article>
   </div>
 
-  <article class="card calendar-card">
-    <div class="card-head">
-      <h2>Events calendar</h2>
-      <div class="cal-nav">
-        <button class="btn small" id="calPrev" type="button" aria-label="Previous month" onclick={() => shiftMonth(-1)}>
-          &lsaquo;
-        </button>
-        <strong id="calTitle" aria-live="polite">{calTitle}</strong>
-        <button class="btn small" id="calNext" type="button" aria-label="Next month" onclick={() => shiftMonth(1)}>
-          &rsaquo;
-        </button>
-        <button class="btn small" id="calToday" type="button" onclick={jumpToday}>Today</button>
-      </div>
-    </div>
-
-    <div class="cal-grid cal-dow" id="calDow">
-      {#each DOW as d}
-        <div>{d}</div>
-      {/each}
-    </div>
-
-    <div class="cal-grid" id="calGrid">
-      {#each calCells as cell (cell.key)}
-        <button
-          type="button"
-          class="cal-cell"
-          class:other={cell.other}
-          class:today={cell.today}
-          class:selected={cell.selected}
-          aria-label={`${fmtDate(cell.key)}${
-            cell.evs.length
-              ? ': ' +
-                cell.evs
-                  .map(
-                    (e) =>
-                      `${e.title}${e.dayCount > 1 ? ` day ${e.dayNo} of ${e.dayCount}` : ''} (${e.status})`
-                  )
-                  .join(', ')
-              : ': no events'
-          }`}
-          onclick={() => (calSelected = cell.key)}
-        >
-          <span class="cal-num">{cell.dayNum}</span>
-          {#each cell.evs.slice(0, 2) as e (e.event_id)}
-            <span class={`chip ${e.status}`}>
-              {e.status === 'Completed' ? '✓ ' : ''}{e.title}{e.dayCount > 1 ? ` (${e.dayNo}/${e.dayCount})` : ''}
-            </span>
-          {/each}
-          {#if cell.evs.length > 2}
-            <span class="cal-more">+{cell.evs.length - 2} more</span>
-          {/if}
-          {#if cell.evs.length}
-            <span class="cal-dots">
-              {#each cell.evs as _}
-                <i></i>
-              {/each}
-            </span>
-          {/if}
-        </button>
-      {/each}
-    </div>
-
-    <div class="cal-detail" id="calDetail" aria-live="polite">
-      {#if calSelected}
-        {@const list = byDate[calSelected] || []}
-        <strong>{fmtDate(calSelected)}</strong>
-        {#if !list.length}
-          <p class="muted">No events on this day.</p>
-        {:else}
-          <ul>
-            {#each list as e (e.event_id)}
-              <li>
-                <span><strong>{e.title}</strong> &middot; {e.location}</span>
-                <span class="muted">{e.status} &middot; {baht(e.budget_planned)} planned</span>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      {:else}
-        <p class="muted">Select a day to see its events.</p>
-      {/if}
-    </div>
-  </article>
+  <Calendar events={dash?.events ?? []} today={dash?.today ?? ''} {onOpenProject} />
 </section>
