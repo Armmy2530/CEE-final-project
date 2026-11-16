@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { normalizeMemberId } from '$lib/server/db';
 import { getClientIp, jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
 import { validPassword } from '$lib/server/runtime';
 
@@ -24,7 +25,8 @@ export const POST: RequestHandler = async (event) => {
     return jsonFail(400, 'Password must be at least 8 characters.');
   }
 
-  const u = typeof member_id === 'string' ? rt.db.getUser(member_id.trim()) : null;
+  const id = typeof member_id === 'string' ? normalizeMemberId(member_id) : '';
+  const u = id ? rt.db.getUser(id) : null;
   if (!u || u.pw_hash) {
     return jsonFail(400, 'This ID is not registered or already has a password. Ask an admin to reset it.');
   }

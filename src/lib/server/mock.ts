@@ -1,8 +1,11 @@
 // Loads and normalizes the canonical sample-sheets/*.csv (Mock-Data) dataset.
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { addDays, daysBetween } from './dates';
 import { KEY_FIELD, NORMALIZERS, rowsToObjects, TABS, type RawRow, type SheetData, type TabName } from './sheets';
+
+const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -54,11 +57,11 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((cell) => cell.trim() !== ''));
 }
 
-function resolveSampleSheetsDir(): string {
+export function resolveSampleSheetsDir(): string {
   const candidates = [
     path.resolve(process.cwd(), 'sample-sheets'),
-    path.resolve(import.meta.dir, '../../../sample-sheets'),
-    path.resolve(import.meta.dir, '../../sample-sheets')
+    path.resolve(THIS_DIR, '../../../sample-sheets'),
+    path.resolve(THIS_DIR, '../../sample-sheets')
   ];
   for (const dir of candidates) {
     if (fs.existsSync(path.join(dir, 'Events.csv'))) return dir;

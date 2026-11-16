@@ -6,6 +6,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   const runtime = getRuntime();
   event.locals.runtime = runtime;
 
+  await runtime.ensureSeeded();
   const token = event.cookies.get('sid');
   event.locals.user = runtime.db.getSession(token);
 

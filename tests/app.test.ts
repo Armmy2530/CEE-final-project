@@ -9,9 +9,9 @@ import { buildAlerts } from '../src/lib/server/alerts';
 import { normalizeDate, daysBetween, addDays } from '../src/lib/server/dates';
 import { parseBatchResponse, createSource } from '../src/lib/server/sheets';
 import { buildDashboard } from '../src/lib/server/dashboard';
-import { generateMock, parseCsv } from '../src/lib/server/mock';
+import { generateMock, parseCsv, resolveSampleSheetsDir } from '../src/lib/server/mock';
 import { answerOffline, askOpenRouter, buildContext } from '../src/lib/server/chat';
-import { openDb } from '../src/lib/server/db';
+import { normalizeMemberId, openDb } from '../src/lib/server/db';
 import { createRuntime, setRuntimeForTesting } from '../src/lib/server/runtime';
 import { rank } from '../src/lib/search';
 import {
@@ -396,9 +396,12 @@ describe('Project search and offline chat', () => {
 });
 
 // ---- SvelteKit API Integration Tests ----
-function createHarness(envOverrides: Record<string, string | undefined> = {}) {
+function createHarness(
+  envOverrides: Record<string, string | undefined> = {},
+  source?: ReturnType<typeof createSource>
+) {
   const db = openDb(':memory:');
-  const rt = createRuntime({ env: { TZ_NAME: 'Asia/Bangkok', ...envOverrides }, db });
+  const rt = createRuntime({ env: { TZ_NAME: 'Asia/Bangkok', ...envOverrides }, db, source });
   setRuntimeForTesting(rt);
 
   const routes: Array<{
@@ -877,4 +880,104 @@ describe('Database legacy migration', () => {
   });
 });
 
+// ---- Idempotent Seeding, Admin Promotion & Cross-Runtime Regression Tests ----
+describe('Idempotent seeding, admin promotion, and runtime compatibility', () => {
+  test('resolveSampleSheetsDir and generateMock work without Bun-specific import.meta.dir', () => {
+    const dir = resolveSampleSheetsDir();
+    expect(fs.existsSync(path.join(dir, 'Members.csv'))).toBe(true);
+    const mockSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/lib/server/mock.ts'), 'utf8');
+    expect(mockSrc).not.toContain('import.meta.dir');
+    const data = generateMock('2026-11-16');
+    expect(data.Members).toHaveLength(67);
+    expect(data.Members[0].member_id).toBe('MOCK-66-0001');
+  });
+
+  test('seedFromMembers is idempotent and promotes MOCK-66-0001 to admin even if registered early as user', async () => {
+    const db = openDb(':memory:');
+    try {
+      // Simulate the exact bug state: user clicked Sign up for MOCK-66-0001 with role = 'user' before seeding ran
+      db.createUser('MOCK-66-0001', 'Sutthikan Panla', 'user');
+      await db.setPassword('MOCK-66-0001', 'existingpass1');
+      db.setTheme('MOCK-66-0001', 'dark');
+      const token = db.createSession('MOCK-66-0001');
+
+      expect(db.getUser('MOCK-66-0001')?.role).toBe('user');
+      expect(db.listUsers()).toHaveLength(1);
+
+      // Now seedFromMembers runs with all 67 members
+      db.seedFromMembers(generateMock('2026-11-16').Members);
+
+      const all = db.listUsers();
+      expect(all).toHaveLength(67);
+      const admin = db.getUser('MOCK-66-0001')!;
+      expect(admin.role).toBe('admin');
+      expect(admin.full_name).toBe('Sutthikan Panla');
+      expect(admin.theme).toBe('dark');
+      expect(admin.pw_hash).not.toBeNull();
+
+      // Existing session immediately sees promoted role and password still verifies
+      expect(db.getSession(token)?.role).toBe('admin');
+      expect((await db.verifyPassword('mock-66-0001', 'existingpass1'))?.role).toBe('admin');
+
+      // Re-running seedFromMembers remains idempotent
+      db.seedFromMembers(generateMock('2026-11-16').Members);
+      expect(db.listUsers()).toHaveLength(67);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('/api/auth/register assigns admin to MOCK-66-0001 when unseeded, and GET /api/me promotes existing session once seeding recovers', async () => {
+    let failSeed = true;
+    const mockSource = {
+      mode: 'mock' as const,
+      async getData() {
+        if (failSeed) throw new Error('simulated transient failure');
+        return { data: generateMock('2026-11-16'), source: 'mock' as const, fetchedAt: Date.now(), stale: false };
+      }
+    };
+
+    const { call, close } = createHarness({}, mockSource);
+    try {
+      // 1. Register MOCK-66-0001 via Sign up while seeding is failing (using lowercase + spaces)
+      const reg = await call('POST', '/api/auth/register', {
+        member_id: '  mock-66-0001  ',
+        full_name: 'Sutthikan Panla',
+        password: 'adminpass123'
+      });
+      expect(reg.status).toBe(201);
+      expect(reg.body.user.member_id).toBe('MOCK-66-0001');
+      expect(reg.body.user.role).toBe('admin');
+
+      // 2. Seeding recovers -> GET /api/me runs ensureSeeded() and seeds remaining 66 members
+      failSeed = false;
+      const me = await call('GET', '/api/me', undefined, reg.cookie);
+      expect(me.status).toBe(200);
+      expect(me.body.user.role).toBe('admin');
+
+      const usersRes = await call('GET', '/api/admin/users', undefined, reg.cookie);
+      expect(usersRes.status).toBe(200);
+      expect(usersRes.body.users).toHaveLength(67);
+
+      // 3. Case-insensitive & trimmed setup + login for MOCK-66-0002
+      expect(normalizeMemberId('  mock-66-0002 ')).toBe('MOCK-66-0002');
+      const setup2 = await call('POST', '/api/auth/setup', {
+        member_id: ' mock-66-0002 ',
+        password: 'memberpass1'
+      });
+      expect(setup2.status).toBe(200);
+      expect(setup2.body.user.member_id).toBe('MOCK-66-0002');
+      expect(setup2.body.user.role).toBe('user');
+
+      const login2 = await call('POST', '/api/auth/login', {
+        member_id: 'mock-66-0002',
+        password: 'memberpass1'
+      });
+      expect(login2.status).toBe(200);
+      expect(login2.body.user.member_id).toBe('MOCK-66-0002');
+    } finally {
+      close();
+    }
+  });
+});
 
