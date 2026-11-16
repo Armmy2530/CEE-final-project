@@ -67,7 +67,7 @@
 <header class="topbar">
   <div class="brand">
     <img class="brand-logo" src="/image/academic-ac-logo.png" alt="" />
-    <span class="brand-name">ACADEMIC AC</span>
+    <span class="brand-name">Club Dashboard</span>
   </div>
 
   <nav class="tabs" aria-label="Pages">

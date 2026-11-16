@@ -1,7 +1,7 @@
 {
   "name": "club-activity-dashboard",
   "version": "2.0.0",
-  "description": "Club Activity Dashboard (ACADEMIC AC) - Bun + SvelteKit (Svelte 5) + Google Sheets + bun:sqlite",
+  "description": "Club Dashboard - Bun + SvelteKit (Svelte 5) + Google Sheets + bun:sqlite + OpenRouter AI",
   "license": "MIT",
   "private": true,
   "type": "module",
