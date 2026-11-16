@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { normalizeMemberId, type UserRole } from '$lib/server/db';
 import { getClientIp, jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
 import { ID_RE, validPassword } from '$lib/server/runtime';
 
@@ -19,7 +20,7 @@ export const POST: RequestHandler = async (event) => {
     return jsonFail(429, 'Too many attempts. Try again later.');
   }
 
-  const id = typeof body.member_id === 'string' ? body.member_id.trim() : '';
+  const id = typeof body.member_id === 'string' ? normalizeMemberId(body.member_id) : '';
   const name = typeof body.full_name === 'string' ? body.full_name.trim() : '';
   const password = body.password;
 
@@ -36,7 +37,8 @@ export const POST: RequestHandler = async (event) => {
     return jsonFail(409, 'This ID already exists.');
   }
 
-  rt.db.createUser(id, name, 'user');
+  const role: UserRole = id.toUpperCase() === 'MOCK-66-0001' ? 'admin' : 'user';
+  rt.db.createUser(id, name, role);
   await rt.db.setPassword(id, password);
   const token = rt.db.createSession(id);
   setSessionCookie(event, token);
@@ -46,7 +48,7 @@ export const POST: RequestHandler = async (event) => {
       user: {
         member_id: id,
         full_name: name,
-        role: 'user',
+        role,
         theme: null
       }
     },

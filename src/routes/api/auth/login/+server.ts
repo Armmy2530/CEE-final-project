@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { normalizeMemberId } from '$lib/server/db';
 import { getClientIp, jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
 
 export const POST: RequestHandler = async (event) => {
@@ -14,19 +15,17 @@ export const POST: RequestHandler = async (event) => {
   }
 
   const { member_id, password } = body;
+  const id = typeof member_id === 'string' ? normalizeMemberId(member_id) : '';
   const ip = getClientIp(event);
-  const key = `login:${ip}:${String(member_id ?? '').toLowerCase()}`;
+  const key = `login:${ip}:${id.toLowerCase()}`;
   if (!rt.loginLimit.take(key)) {
     return jsonFail(429, 'Too many attempts. Try again in 15 minutes.');
   }
 
-  const u =
-    typeof member_id === 'string' && typeof password === 'string'
-      ? await rt.db.verifyPassword(member_id.trim(), password)
-      : null;
+  const u = id && typeof password === 'string' ? await rt.db.verifyPassword(id, password) : null;
 
   if (!u) {
-    const exists = typeof member_id === 'string' ? rt.db.getUser(member_id.trim()) : null;
+    const exists = id ? rt.db.getUser(id) : null;
     return jsonFail(
       401,
       exists && !exists.pw_hash

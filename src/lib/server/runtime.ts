@@ -42,16 +42,23 @@ export function createRuntime({ env = process.env, db, source }: RuntimeOptions 
   const loginLimit = createLimiter(8, 15 * 60 * 1000);
   const chatLimit = createLimiter(20, 60 * 1000);
   let seeded = false;
+  let seeding: Promise<void> | null = null;
 
   async function ensureSeeded() {
     if (seeded) return;
-    try {
-      const r = await sheetSource.getData();
-      database.seedFromMembers(r.data.Members);
-      seeded = true;
-    } catch (e) {
-      console.error('seed:', (e as Error).message);
-    }
+    if (seeding) return seeding;
+    seeding = (async () => {
+      try {
+        const r = await sheetSource.getData();
+        database.seedFromMembers(r.data.Members);
+        seeded = true;
+      } catch (e) {
+        console.error('seed:', (e as Error).message);
+      } finally {
+        seeding = null;
+      }
+    })();
+    return seeding;
   }
 
   async function getDashboard(force = false): Promise<DashboardPayload> {

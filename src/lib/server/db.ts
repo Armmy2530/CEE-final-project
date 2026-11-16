@@ -1,6 +1,6 @@
-// Accounts + sessions in SQLite (bun:sqlite). Passwords are scrypt-hashed with a per-user
-// salt; session tokens are random and only their SHA-256 is stored.
-import { Database } from 'bun:sqlite';
+// Accounts + sessions in SQLite (bun:sqlite in Bun, node:sqlite fallback in Node).
+// Passwords are scrypt-hashed with a per-user salt; session tokens are random and only their SHA-256 is stored.
+import { createRequire } from 'node:module';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,6 +35,38 @@ export interface PublicUser {
   created_at: number;
 }
 
+interface SqliteStatement {
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): unknown;
+}
+
+interface SqliteDatabase {
+  exec(sql: string): unknown;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+}
+
+const require = createRequire(import.meta.url);
+
+function openSqliteDatabase(file: string): SqliteDatabase {
+  const isBun = Boolean((process.versions as Record<string, string | undefined>).bun);
+  const modName = isBun ? 'bun:sqlite' : 'node:sqlite';
+  const mod = require(modName) as {
+    Database?: new (filename: string) => SqliteDatabase;
+    DatabaseSync?: new (filename: string) => SqliteDatabase;
+  };
+  const Ctor = isBun ? mod.Database : mod.DatabaseSync || mod.Database;
+  if (!Ctor) throw new Error(`SQLite driver unavailable in ${modName}`);
+  return new Ctor(file);
+}
+
+export function normalizeMemberId(id: string): string {
+  const trimmed = id.trim();
+  if (/^(mock-|st)/i.test(trimmed)) return trimmed.toUpperCase();
+  return trimmed;
+}
+
 export const SESSION_MS = 7 * 24 * 3600 * 1000;
 const sha = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -46,7 +78,7 @@ function scrypt(password: string, salt: string): Promise<Buffer> {
 
 export function openDb(file: string) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new Database(file);
+  const db = openSqliteDatabase(file);
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS users (
@@ -74,11 +106,14 @@ export function openDb(file: string) {
 
   const q = {
     count: db.prepare('SELECT COUNT(*) AS n FROM users'),
-    get: db.prepare('SELECT * FROM users WHERE member_id = ?'),
+    get: db.prepare('SELECT * FROM users WHERE LOWER(member_id) = LOWER(?)'),
     list: db.prepare(
       'SELECT member_id, full_name, role, pw_hash IS NOT NULL AS has_password, theme, created_at FROM users ORDER BY role, member_id'
     ),
     insert: db.prepare('INSERT INTO users (member_id, full_name, role, created_at) VALUES (?,?,?,?)'),
+    insertIgnore: db.prepare('INSERT OR IGNORE INTO users (member_id, full_name, role, created_at) VALUES (?,?,?,?)'),
+    promoteAdmin: db.prepare("UPDATE users SET role = 'admin' WHERE LOWER(member_id) = LOWER(?)"),
+    firstUser: db.prepare('SELECT member_id FROM users ORDER BY created_at ASC, member_id ASC LIMIT 1'),
     setPw: db.prepare('UPDATE users SET pw_hash = ?, pw_salt = ? WHERE member_id = ?'),
     setTheme: db.prepare('UPDATE users SET theme = ? WHERE member_id = ?'),
     del: db.prepare('DELETE FROM users WHERE member_id = ?'),
@@ -93,45 +128,67 @@ export function openDb(file: string) {
 
   return {
     seedFromMembers(members: Array<Pick<MemberRecord, 'member_id' | 'full_name'>>) {
-      const row = q.count.get() as { n: number };
-      if (row.n > 0 || !members.length) return;
-      const tx = db.transaction((list: Array<Pick<MemberRecord, 'member_id' | 'full_name'>>) => {
-        const now = Date.now();
-        list.forEach((m, i) => q.insert.run(m.member_id, m.full_name, i === 0 ? 'admin' : 'user', now));
-      });
-      tx(members);
+      if (!members.length) return;
+      const now = Date.now();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (let i = 0; i < members.length; i++) {
+          const m = members[i];
+          const existing = q.get.get(m.member_id) as DbUserRow | undefined;
+          if (!existing) {
+            q.insertIgnore.run(m.member_id, m.full_name, i === 0 ? 'admin' : 'user', now);
+          }
+        }
+        // Always ensure the primary club admin (members[0], e.g. MOCK-66-0001) has role = 'admin'
+        // even if someone registered it early via Sign up before seeding ran.
+        q.promoteAdmin.run(members[0].member_id);
+        if ((q.admins.get() as { n: number }).n === 0) {
+          const first = q.firstUser.get() as { member_id: string } | undefined;
+          if (first) q.promoteAdmin.run(first.member_id);
+        }
+        db.exec('COMMIT');
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
     },
     getUser(id: string): DbUserRow | null {
-      return (q.get.get(id) as DbUserRow | undefined) || null;
+      const row = q.get.get(id.trim()) as DbUserRow | undefined;
+      return row ? { ...row } : null;
     },
     listUsers(): PublicUser[] {
       const rows = q.list.all() as Array<Omit<PublicUser, 'has_password'> & { has_password: number }>;
       return rows.map((u) => ({ ...u, has_password: Boolean(u.has_password) }));
     },
     createUser(member_id: string, full_name: string, role: UserRole) {
-      q.insert.run(member_id, full_name, role, Date.now());
+      q.insert.run(normalizeMemberId(member_id), full_name, role, Date.now());
     },
     deleteUser(id: string): 'not_found' | 'last_admin' | 'ok' {
-      const u = q.get.get(id) as DbUserRow | undefined;
+      const u = q.get.get(id.trim()) as DbUserRow | undefined;
       if (!u) return 'not_found';
       if (u.role === 'admin' && (q.admins.get() as { n: number }).n <= 1) return 'last_admin';
-      q.del.run(id);
+      q.del.run(u.member_id);
       return 'ok';
     },
     async setPassword(id: string, password: string) {
+      const u = q.get.get(id.trim()) as DbUserRow | undefined;
+      const targetId = u ? u.member_id : id.trim();
       const salt = crypto.randomBytes(16).toString('hex');
-      q.setPw.run((await scrypt(password, salt)).toString('hex'), salt, id);
-      q.sessDelUser.run(id);
+      q.setPw.run((await scrypt(password, salt)).toString('hex'), salt, targetId);
+      q.sessDelUser.run(targetId);
     },
     resetPassword(id: string) {
-      q.setPw.run(null, null, id);
-      q.sessDelUser.run(id);
+      const u = q.get.get(id.trim()) as DbUserRow | undefined;
+      const targetId = u ? u.member_id : id.trim();
+      q.setPw.run(null, null, targetId);
+      q.sessDelUser.run(targetId);
     },
     setTheme(id: string, theme: ThemeMode) {
-      q.setTheme.run(theme, id);
+      const u = q.get.get(id.trim()) as DbUserRow | undefined;
+      q.setTheme.run(theme, u ? u.member_id : id.trim());
     },
     async verifyPassword(id: string, password: string): Promise<SessionUser | null> {
-      const u = q.get.get(id) as DbUserRow | undefined;
+      const u = q.get.get(id.trim()) as DbUserRow | undefined;
       // Always spend the same work, even for unknown users, to avoid timing leaks.
       const salt = u?.pw_salt || 'x'.repeat(32);
       const hash = await scrypt(password, salt);
@@ -146,7 +203,9 @@ export function openDb(file: string) {
       return token;
     },
     getSession(token: string | undefined | null): SessionUser | null {
-      return token ? ((q.sessGet.get(sha(token), Date.now()) as SessionUser | undefined) || null) : null;
+      if (!token) return null;
+      const row = q.sessGet.get(sha(token), Date.now()) as SessionUser | undefined;
+      return row ? { ...row } : null;
     },
     deleteSession(token: string | undefined | null) {
       if (token) q.sessDel.run(sha(token));

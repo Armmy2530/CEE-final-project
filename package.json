@@ -6,9 +6,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --bun vite dev",
-    "build": "bun --bun vite build",
-    "preview": "bun --bun vite preview",
+    "dev": "bun --bun ./node_modules/vite/bin/vite.js dev",
+    "build": "bun --bun ./node_modules/vite/bin/vite.js build",
+    "preview": "bun --bun ./node_modules/vite/bin/vite.js preview",
     "start": "bun ./build/index.js",
     "test": "bun test",
     "check": "svelte-kit sync && tsc --noEmit"

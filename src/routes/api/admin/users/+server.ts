@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { normalizeMemberId } from '$lib/server/db';
 import { jsonFail, jsonOk, readJsonBody } from '$lib/server/http';
 import { ID_RE } from '$lib/server/runtime';
 
@@ -20,7 +21,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return jsonFail(err.code || 400, err.message || 'bad json');
   }
 
-  const id = typeof body.member_id === 'string' ? body.member_id.trim() : '';
+  const id = typeof body.member_id === 'string' ? normalizeMemberId(body.member_id) : '';
   const name = typeof body.full_name === 'string' ? body.full_name.trim() : '';
   const role = body.role;
 
