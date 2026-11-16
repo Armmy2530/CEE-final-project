@@ -21,6 +21,9 @@
     sheetTitle: string;
     hasGoogleApiKey: boolean;
     googleClientId: string;
+    supabaseOAuthAvailable?: boolean;
+    hasDriveToken?: boolean;
+    googleEmail?: string;
     supabaseStatus: SupabaseStatus;
     dbBackend: DbBackend;
     recentSheets: RecentSheetItem[];
@@ -52,6 +55,10 @@
   let activeSheetId = $state('');
   let activeSheetTitle = $state('');
   let googleClientId = $state('');
+  let supabaseOAuthAvailable = $state(false);
+  let hasDriveToken = $state(false);
+  let hasDriveAccess = $state(false);
+  let googleEmail = $state('');
   let supabaseStatus = $state<SupabaseStatus>('disabled');
   let dbBackend = $state<DbBackend>('sqlite');
   let recentSheets = $state<RecentSheetItem[]>([]);
@@ -59,9 +66,16 @@
   let sheetUrlOrId = $state('');
   let sheetTitleInput = $state('');
   let driveFiles = $state<DriveFileItem[]>([]);
+  let driveSearch = $state('');
   let showTokenPrompt = $state(false);
   let manualAccessToken = $state('');
   let driveNote = $state('');
+
+  const filteredDriveFiles = $derived.by(() => {
+    const q = driveSearch.trim().toLowerCase();
+    if (!q) return driveFiles;
+    return driveFiles.filter((f) => f.name.toLowerCase().includes(q));
+  });
 
   async function loadConfig() {
     loadingConfig = true;
@@ -72,9 +86,17 @@
       activeSheetId = cfg.sheetId;
       activeSheetTitle = cfg.sheetTitle;
       googleClientId = cfg.googleClientId;
+      supabaseOAuthAvailable = Boolean(cfg.supabaseOAuthAvailable);
+      hasDriveToken = Boolean(cfg.hasDriveToken);
+      googleEmail = cfg.googleEmail || '';
       supabaseStatus = cfg.supabaseStatus;
       dbBackend = cfg.dbBackend;
       recentSheets = cfg.recentSheets || [];
+      if (cfg.hasDriveToken) {
+        await fetchDriveFiles();
+      } else {
+        hasDriveAccess = false;
+      }
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -85,6 +107,7 @@
   $effect(() => {
     if (open) {
       driveNote = '';
+      driveSearch = '';
       loadConfig();
     }
   });
@@ -126,17 +149,32 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Drive error ${res.status}`);
       if (Array.isArray(data.recentSheets)) recentSheets = data.recentSheets;
+      if (typeof data.supabaseOAuthAvailable === 'boolean') {
+        supabaseOAuthAvailable = data.supabaseOAuthAvailable;
+      }
+      if (typeof data.googleEmail === 'string' && data.googleEmail) {
+        googleEmail = data.googleEmail;
+      }
       if (data.hasDriveAccess) {
+        hasDriveAccess = true;
+        hasDriveToken = true;
         driveFiles = data.files || [];
         showTokenPrompt = false;
         if (!driveFiles.length) {
           driveNote = 'No Google Spreadsheets found in your Google Drive.';
         }
       } else {
-        showTokenPrompt = true;
-        driveNote = googleClientId
-          ? 'Authorize Google Drive access to list your spreadsheets.'
-          : 'Set PUBLIC_GOOGLE_CLIENT_ID in .env for 1-click Google OAuth, or paste a Drive OAuth token below.';
+        hasDriveAccess = false;
+        if (data.tokenExpired) {
+          hasDriveToken = false;
+          driveFiles = [];
+        }
+        showTokenPrompt = !supabaseOAuthAvailable && !googleClientId;
+        driveNote = data.tokenExpired
+          ? 'Your Google Drive session expired. Click Connect Google Drive to authorize again.'
+          : supabaseOAuthAvailable || googleClientId
+            ? 'Authorize Google Drive access to list your spreadsheets.'
+            : 'Configure SUPABASE_URL or PUBLIC_GOOGLE_CLIENT_ID in .env for 1-click Google OAuth, or paste a Drive OAuth token below.';
       }
     } catch (e) {
       error = (e as Error).message;
@@ -145,10 +183,53 @@
     }
   }
 
+  function startSupabaseDriveOAuth() {
+    if (typeof window === 'undefined') return;
+    error = '';
+    sessionStorage.setItem('oauth_intent', 'drive');
+    const popup = window.open(
+      '/api/auth/google?intent=drive',
+      'supabase-google-oauth',
+      'width=520,height=640'
+    );
+    if (!popup) {
+      window.location.href = '/api/auth/google?intent=drive';
+    }
+  }
+
+  async function handleWindowMessage(e: MessageEvent) {
+    if (typeof window === 'undefined' || e.origin !== window.location.origin) return;
+    const payload = e.data as {
+      type?: string;
+      ok?: boolean;
+      error?: string;
+      hasDriveAccess?: boolean;
+      googleEmail?: string;
+    } | null;
+    if (!payload || payload.type !== 'supabase-google-oauth') return;
+    if (payload.ok) {
+      if (payload.googleEmail) googleEmail = payload.googleEmail;
+      await loadConfig();
+      if (!hasDriveToken) {
+        await fetchDriveFiles();
+      }
+    } else if (payload.error) {
+      error = payload.error;
+    }
+  }
+
   async function browseGoogleDrive() {
     error = '';
     if (manualAccessToken.trim()) {
       await fetchDriveFiles(manualAccessToken.trim());
+      return;
+    }
+    if (supabaseOAuthAvailable && !hasDriveAccess) {
+      startSupabaseDriveOAuth();
+      return;
+    }
+    if (hasDriveAccess) {
+      await fetchDriveFiles();
       return;
     }
     if (googleClientId) {
@@ -238,7 +319,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onmessage={handleWindowMessage} />
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -305,17 +386,44 @@
           <div class="sheet-section-head">
             <div>
               <h3>Select from Google Drive</h3>
-              <p class="muted">Browse your Google Drive spreadsheets or switch to a recent sheet.</p>
+              <p class="muted">Browse your Google Drive spreadsheets (private or shared) or switch to a recent sheet.</p>
             </div>
             <button
               type="button"
+              id="browseDriveBtn"
               class="btn small"
               disabled={driveLoading || busy || loadingConfig}
               onclick={browseGoogleDrive}
             >
-              {driveLoading ? 'Loading Drive...' : 'Browse Google Drive'}
+              {#if driveLoading}
+                Loading Drive...
+              {:else if hasDriveAccess}
+                Refresh Drive
+              {:else if supabaseOAuthAvailable}
+                Connect Google Drive
+              {:else}
+                Browse Google Drive
+              {/if}
             </button>
           </div>
+
+          {#if hasDriveAccess || hasDriveToken}
+            <div class="drive-connected-bar">
+              <span class="badge ok">
+                Google Drive connected{googleEmail ? ` (${googleEmail})` : ''}
+              </span>
+              {#if supabaseOAuthAvailable}
+                <button
+                  type="button"
+                  class="text-link"
+                  disabled={driveLoading || busy}
+                  onclick={startSupabaseDriveOAuth}
+                >
+                  Reconnect
+                </button>
+              {/if}
+            </div>
+          {/if}
 
           {#if driveNote}
             <p class="hint">{driveNote}</p>
@@ -341,28 +449,40 @@
           {/if}
 
           {#if driveFiles.length}
-            <ul class="sheet-list" aria-label="Google Drive spreadsheets">
-              {#each driveFiles as file (file.id)}
-                <li class="sheet-list-item">
-                  <div class="sheet-list-meta">
-                    <strong>{file.name}</strong>
-                    <small class="muted">
-                      {file.modifiedTime
-                        ? `Updated ${new Date(file.modifiedTime).toLocaleDateString('en-GB')}`
-                        : file.id}
-                    </small>
-                  </div>
-                  <button
-                    type="button"
-                    class="btn small primary"
-                    disabled={busy}
-                    onclick={() => connectGoogleSheet(file.id, file.name)}
-                  >
-                    {activeSheetId === file.id && mode === 'google' ? 'Connected' : 'Connect'}
-                  </button>
-                </li>
-              {/each}
-            </ul>
+            <div class="drive-search-row">
+              <input
+                type="search"
+                placeholder="Search Google Drive spreadsheets by name..."
+                aria-label="Search Google Drive spreadsheets"
+                bind:value={driveSearch}
+              />
+            </div>
+            {#if filteredDriveFiles.length}
+              <ul class="sheet-list" aria-label="Google Drive spreadsheets">
+                {#each filteredDriveFiles as file (file.id)}
+                  <li class="sheet-list-item">
+                    <div class="sheet-list-meta">
+                      <strong>{file.name}</strong>
+                      <small class="muted">
+                        {file.modifiedTime
+                          ? `Updated ${new Date(file.modifiedTime).toLocaleDateString('en-GB')}`
+                          : file.id}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      class="btn small primary"
+                      disabled={busy}
+                      onclick={() => connectGoogleSheet(file.id, file.name)}
+                    >
+                      {activeSheetId === file.id && mode === 'google' ? 'Connected' : 'Connect'}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="hint">No spreadsheets match "{driveSearch}".</p>
+            {/if}
           {/if}
 
           {#if recentSheets.length}
@@ -394,9 +514,8 @@
         <section class="sheet-section">
           <h3>Paste Google Sheet Link or ID (Instant Connect)</h3>
           <p class="muted">
-            Share your sheet as <b>"Anyone with the link can view"</b> with tabs
+            Share your sheet as <b>"Anyone with the link can view"</b> (or connect Google Drive above for private sheets) with tabs
             <code>Members</code>, <code>Events</code>, <code>Attendance</code>, and <code>Budget</code>.
-            Works even without a Google API key.
           </p>
           <form
             class="sheet-url-form"

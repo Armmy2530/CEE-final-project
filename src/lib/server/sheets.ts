@@ -343,9 +343,15 @@ export interface SourceOptions {
   env?: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  getAccessToken?: () => string | null;
 }
 
-export function createSource({ env = process.env, fetchImpl = fetch, now = () => Date.now() }: SourceOptions = {}) {
+export function createSource({
+  env = process.env,
+  fetchImpl = fetch,
+  now = () => Date.now(),
+  getAccessToken
+}: SourceOptions = {}) {
   const key = (env.GOOGLE_API_KEY || '').trim();
   const ttl = Math.max(0, Number(env.SHEET_CACHE_SECONDS ?? 30)) * 1000;
   const tz = env.TZ_NAME || 'Asia/Bangkok';
@@ -373,10 +379,14 @@ export function createSource({ env = process.env, fetchImpl = fetch, now = () =>
     inflight = null;
   }
 
-  async function fetchGoogleBatch(sheetId: string): Promise<SheetData> {
+  async function fetchGoogleBatch(sheetId: string, allowOAuth = true): Promise<SheetData> {
+    const oauthToken = allowOAuth ? (getAccessToken?.() || '').trim() : '';
     const params = TABS.map((t) => `ranges=${encodeURIComponent(t)}`).join('&');
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values:batchGet?${params}&key=${encodeURIComponent(key)}`;
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(10000) });
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values:batchGet?${params}${key && !oauthToken ? `&key=${encodeURIComponent(key)}` : ''}`;
+    const res = await fetchImpl(url, {
+      headers: oauthToken ? { Authorization: `Bearer ${oauthToken}` } : undefined,
+      signal: AbortSignal.timeout(10000)
+    });
     if (!res.ok) {
       const err = new Error(`Google Sheets API responded ${res.status}`) as Error & { status?: number };
       err.status = res.status;
@@ -411,9 +421,19 @@ export function createSource({ env = process.env, fetchImpl = fetch, now = () =>
   }
 
   async function fetchGoogleForId(sheetId: string): Promise<SheetData> {
+    const oauthToken = (getAccessToken?.() || '').trim();
+    if (oauthToken) {
+      try {
+        return await fetchGoogleBatch(sheetId, true);
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        if (status !== 400 && status !== 401 && status !== 403) throw err;
+        // Fall through to API key or keyless public CSV when OAuth token is expired or lacks access
+      }
+    }
     if (key) {
       try {
-        return await fetchGoogleBatch(sheetId);
+        return await fetchGoogleBatch(sheetId, false);
       } catch (err) {
         const status = (err as { status?: number }).status;
         if (status !== 400 && status !== 403) throw err;

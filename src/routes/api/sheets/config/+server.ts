@@ -37,6 +37,9 @@ export const GET: RequestHandler = async ({ locals }) => {
     sheetTitle: cfg.sheetTitle || '',
     hasGoogleApiKey: Boolean((rt.env.GOOGLE_API_KEY || '').trim()),
     googleClientId: (rt.env.PUBLIC_GOOGLE_CLIENT_ID || '').trim(),
+    supabaseOAuthAvailable: Boolean((rt.env.SUPABASE_URL || '').trim()),
+    hasDriveToken: Boolean((rt.db.getSetting('google_provider_token') || '').trim()),
+    googleEmail: rt.db.getSetting('google_connected_email') || '',
     supabaseStatus: rt.getSupabaseStatus(),
     dbBackend: rt.getDbBackend(),
     recentSheets
