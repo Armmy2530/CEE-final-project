@@ -212,7 +212,8 @@ export function createSupabaseClient({
         member_id: userRow.member_id,
         full_name: userRow.full_name,
         role: userRow.role,
-        theme: userRow.theme
+        theme: userRow.theme,
+        linkedGoogleEmail: null
       },
       row: userRow,
       expires_at: Number(s.expires_at) || 0
@@ -236,6 +237,17 @@ export function createSupabaseClient({
   async function deleteUserSessions(memberId: string): Promise<boolean> {
     if (!enabled || status === 'schema_missing') return false;
     const r = await request('DELETE', `sessions?member_id=eq.${encodeURIComponent(memberId)}`);
+    return r.ok;
+  }
+
+  async function reassignSessions(fromMemberId: string, toMemberId: string): Promise<boolean> {
+    if (!enabled || status === 'schema_missing') return false;
+    const r = await request(
+      'PATCH',
+      `sessions?member_id=eq.${encodeURIComponent(fromMemberId)}`,
+      { member_id: toMemberId },
+      { Prefer: 'return=minimal' }
+    );
     return r.ok;
   }
 
@@ -263,6 +275,12 @@ export function createSupabaseClient({
     return r.ok;
   }
 
+  async function deleteSetting(key: string): Promise<boolean> {
+    if (!enabled || status === 'schema_missing') return false;
+    const r = await request('DELETE', `app_settings?key=eq.${encodeURIComponent(key)}`);
+    return r.ok;
+  }
+
   return {
     schema,
     isEnabled: () => enabled,
@@ -277,8 +295,10 @@ export function createSupabaseClient({
     upsertSession,
     deleteSession,
     deleteUserSessions,
+    reassignSessions,
     listSettings,
-    upsertSetting
+    upsertSetting,
+    deleteSetting
   };
 }
 

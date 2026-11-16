@@ -40,7 +40,8 @@ export const POST: RequestHandler = async (event) => {
       member_id: u.member_id,
       full_name: u.full_name,
       role: u.role,
-      theme: u.theme
+      theme: u.theme,
+      linkedGoogleEmail: rt.getLinkedGoogleEmail(u.member_id)
     }
   });
 };

@@ -1241,11 +1241,13 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
       upsertSession: async () => true,
       deleteSession: async () => true,
       deleteUserSessions: async () => true,
+      reassignSessions: async () => true,
       listSettings: async () => [],
       upsertSetting: async (key: string) => {
         upsertedSettings.push(key);
         return true;
-      }
+      },
+      deleteSetting: async () => true
     };
 
     const { call, close } = createHarness({}, undefined, mockSupa);
@@ -1297,12 +1299,18 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       const redir = await call('GET', '/api/auth/google?intent=login');
       expect(redir.status).toBe(302);
       expect(redir.headers.get('location')).toContain('https://demo.supabase.co/auth/v1/authorize');
+
+      const linkUrl = await call('GET', '/api/auth/google?intent=link&json=1');
+      expect(linkUrl.status).toBe(200);
+      expect(new URL(linkUrl.body.url).searchParams.get('redirect_to')).toBe(
+        'http://localhost/auth/callback?intent=link'
+      );
     } finally {
       close();
     }
   });
 
-  test('POST /api/auth/google verifies token, stores provider_token, signs in or keeps session, and powers /api/sheets/drive & createSource', async () => {
+  test('Google sign-in hooks only to linked accounts, supports link/unlink, enforces admin-only sheets, and surfaces Drive 403 activationUrl', async () => {
     const origFetch = globalThis.fetch;
     const savedSettings = new Map<string, string>();
     const mockSupa = {
@@ -1319,15 +1327,21 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       upsertSession: async () => true,
       deleteSession: async () => true,
       deleteUserSessions: async () => true,
+      reassignSessions: async () => true,
       listSettings: async () => [],
       upsertSetting: async (key: string, value: string) => {
         savedSettings.set(key, value);
+        return true;
+      },
+      deleteSetting: async (key: string) => {
+        savedSettings.delete(key);
         return true;
       }
     };
 
     let driveStatus = 200;
     let capturedDriveAuth = '';
+    let activeGoogleEmail = 'club.lead@example.com';
     globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
       const hdrs = new Headers(init?.headers);
@@ -1338,7 +1352,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
         return new Response(
           JSON.stringify({
             id: 'a1b2c3d4-0000-0000-0000-000000000000',
-            email: 'club.lead@example.com',
+            email: activeGoogleEmail,
             user_metadata: { full_name: 'Club Lead' }
           }),
           { status: 200 }
@@ -1348,6 +1362,35 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
         capturedDriveAuth = hdrs.get('authorization') || '';
         if (driveStatus === 401) {
           return new Response('Unauthorized', { status: 401 });
+        }
+        if (driveStatus === 403) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 403,
+                message:
+                  'Google Drive API has not been used in project 802882631291 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=802882631291 then retry.',
+                errors: [
+                  {
+                    reason: 'accessNotConfigured',
+                    extendedHelp:
+                      'https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=802882631291'
+                  }
+                ],
+                details: [
+                  {
+                    '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+                    reason: 'SERVICE_DISABLED',
+                    metadata: {
+                      activationUrl:
+                        'https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=802882631291'
+                    }
+                  }
+                ]
+              }
+            }),
+            { status: 403 }
+          );
         }
         return new Response(
           JSON.stringify({
@@ -1373,63 +1416,161 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       const bad = await call('POST', '/api/auth/google', { access_token: 'bad-supa-token' });
       expect(bad.status).toBe(401);
 
-      // 2. Unauthenticated Google login creates admin user + session + saves provider_token
-      const loginRes = await call('POST', '/api/auth/google', {
+      // 2. Unlinked Google login returns 403 and NEVER creates a GOOGLE-XXXXXX user
+      const unlinkedRes = await call('POST', '/api/auth/google', {
         access_token: 'valid-supa-token',
-        provider_token: 'goog-provider-tok-1',
+        provider_token: 'goog-provider-tok-unlinked',
         intent: 'login'
       });
-      expect(loginRes.status).toBe(200);
-      expect(loginRes.body.user.member_id).toBe('GOOGLE-A1B2C3');
-      expect(loginRes.body.user.full_name).toBe('Club Lead');
-      expect(loginRes.body.user.role).toBe('admin');
-      expect(loginRes.body.hasDriveAccess).toBe(true);
-      expect(loginRes.body.googleEmail).toBe('club.lead@example.com');
-      expect(loginRes.cookie).toContain('sid=');
+      expect(unlinkedRes.status).toBe(403);
+      expect(unlinkedRes.body.error).toContain('No club account is linked to club.lead@example.com');
+      expect(savedSettings.has('google_provider_token')).toBe(false);
+
+      // 3. Admin (MOCK-66-0001) sets up password -> linkedGoogleEmail starts null
+      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      expect(adm.status).toBe(200);
+      expect(adm.body.user.linkedGoogleEmail).toBeNull();
+
+      // Verify no GOOGLE-* user was provisioned
+      const userList = await call('GET', '/api/admin/users', undefined, adm.cookie);
+      expect(
+        (userList.body.users as Array<{ member_id: string }>).some((u) => u.member_id.startsWith('GOOGLE-'))
+      ).toBe(false);
+
+      // 4. Signed-in admin links Google account (POST /api/auth/google while authenticated)
+      const linkAdm = await call(
+        'POST',
+        '/api/auth/google',
+        {
+          access_token: 'valid-supa-token',
+          provider_token: 'goog-provider-tok-1',
+          intent: 'link'
+        },
+        adm.cookie
+      );
+      expect(linkAdm.status).toBe(200);
+      expect(linkAdm.body.user.member_id).toBe('MOCK-66-0001');
+      expect(linkAdm.body.user.linkedGoogleEmail).toBe('club.lead@example.com');
+      expect(linkAdm.body.hasDriveAccess).toBe(true);
+      expect(savedSettings.get('google_user_map:club.lead@example.com')).toBe('MOCK-66-0001');
+      expect(savedSettings.get('user_google_email:MOCK-66-0001')).toBe('club.lead@example.com');
       expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-1');
       expect(savedSettings.get('google_connected_email')).toBe('club.lead@example.com');
 
-      // 3. /api/sheets/config exposes supabaseOAuthAvailable, hasDriveToken, googleEmail
-      const cfg = await call('GET', '/api/sheets/config', undefined, loginRes.cookie);
+      const meLinked = await call('GET', '/api/me', undefined, adm.cookie);
+      expect(meLinked.body.user.linkedGoogleEmail).toBe('club.lead@example.com');
+
+      // 5. Subsequent unauthenticated Google Sign-In resolves to MOCK-66-0001 (not GOOGLE-XXXXXX)
+      const googleLogin = await call('POST', '/api/auth/google', {
+        access_token: 'valid-supa-token',
+        provider_token: 'goog-provider-tok-2',
+        intent: 'login'
+      });
+      expect(googleLogin.status).toBe(200);
+      expect(googleLogin.body.user.member_id).toBe('MOCK-66-0001');
+      expect(googleLogin.body.user.role).toBe('admin');
+      expect(googleLogin.body.user.linkedGoogleEmail).toBe('club.lead@example.com');
+      expect(googleLogin.cookie).toContain('sid=');
+      expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-2');
+
+      // 6. Normal user (MOCK-66-0002) links their own Google account, does NOT overwrite Drive token,
+      //    and receives 403 on POST /api/sheets/config and GET /api/sheets/drive
+      const normalUser = await call('POST', '/api/auth/setup', {
+        member_id: 'MOCK-66-0002',
+        password: 'memberpass1'
+      });
+      expect(normalUser.status).toBe(200);
+      expect(normalUser.body.user.role).toBe('user');
+
+      activeGoogleEmail = 'member.two@example.com';
+      const linkMember = await call(
+        'POST',
+        '/api/auth/google',
+        {
+          access_token: 'valid-supa-token',
+          provider_token: 'member-token-should-not-overwrite-drive',
+          intent: 'link'
+        },
+        normalUser.cookie
+      );
+      expect(linkMember.status).toBe(200);
+      expect(linkMember.body.user.member_id).toBe('MOCK-66-0002');
+      expect(linkMember.body.user.linkedGoogleEmail).toBe('member.two@example.com');
+      expect(linkMember.body.hasDriveAccess).toBe(false);
+      // Admin's global Drive token was NOT overwritten by normal user
+      expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-2');
+
+      const nonAdminConfig = await call(
+        'POST',
+        '/api/sheets/config',
+        { mode: 'mock' },
+        normalUser.cookie
+      );
+      expect(nonAdminConfig.status).toBe(403);
+      expect(nonAdminConfig.body.error).toContain('Only admins');
+
+      const nonAdminDrive = await call('GET', '/api/sheets/drive', undefined, normalUser.cookie);
+      expect(nonAdminDrive.status).toBe(403);
+      expect(nonAdminDrive.body.error).toContain('Only admins');
+
+      // Unauthenticated Google login as member.two@example.com signs in as MOCK-66-0002
+      const memberGoogleLogin = await call('POST', '/api/auth/google', {
+        access_token: 'valid-supa-token',
+        intent: 'login'
+      });
+      expect(memberGoogleLogin.status).toBe(200);
+      expect(memberGoogleLogin.body.user.member_id).toBe('MOCK-66-0002');
+      expect(memberGoogleLogin.body.user.role).toBe('user');
+
+      // DELETE /api/auth/google unlinks member.two@example.com -> subsequent Google login returns 403
+      const unlinkMember = await call('DELETE', '/api/auth/google', undefined, normalUser.cookie);
+      expect(unlinkMember.status).toBe(200);
+      expect(unlinkMember.body.user.linkedGoogleEmail).toBeNull();
+      expect(savedSettings.has('google_user_map:member.two@example.com')).toBe(false);
+      expect(savedSettings.has('user_google_email:MOCK-66-0002')).toBe(false);
+
+      const afterUnlink = await call('POST', '/api/auth/google', {
+        access_token: 'valid-supa-token',
+        intent: 'login'
+      });
+      expect(afterUnlink.status).toBe(403);
+
+      // 7. Admin succeeds on /api/sheets/config and /api/sheets/drive
+      const adminConfigOk = await call('POST', '/api/sheets/config', { mode: 'mock' }, googleLogin.cookie);
+      expect(adminConfigOk.status).toBe(200);
+
+      const cfg = await call('GET', '/api/sheets/config', undefined, googleLogin.cookie);
       expect(cfg.status).toBe(200);
       expect(cfg.body.supabaseOAuthAvailable).toBe(true);
       expect(cfg.body.hasDriveToken).toBe(true);
       expect(cfg.body.googleEmail).toBe('club.lead@example.com');
 
-      // 4. /api/sheets/drive uses stored google_provider_token automatically
-      const driveOk = await call('GET', '/api/sheets/drive', undefined, loginRes.cookie);
+      const driveOk = await call('GET', '/api/sheets/drive', undefined, googleLogin.cookie);
       expect(driveOk.status).toBe(200);
-      expect(capturedDriveAuth).toBe('Bearer goog-provider-tok-1');
+      expect(capturedDriveAuth).toBe('Bearer goog-provider-tok-2');
       expect(driveOk.body.hasDriveAccess).toBe(true);
       expect(driveOk.body.files).toHaveLength(1);
       expect(driveOk.body.files[0].id).toBe('1PrivSheetABC123');
 
-      // 5. Existing logged-in admin (MOCK-66-0001) keeps their own session when connecting Google Drive
-      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
-      const connectDrive = await call(
-        'POST',
-        '/api/auth/google',
-        {
-          access_token: 'valid-supa-token',
-          provider_token: 'goog-provider-tok-2',
-          intent: 'drive'
-        },
-        adm.cookie
+      // 8. Drive API 403 SERVICE_DISABLED surfaces Google message + activationUrl
+      driveStatus = 403;
+      const driveDisabled = await call('GET', '/api/sheets/drive', undefined, googleLogin.cookie);
+      expect(driveDisabled.status).toBe(403);
+      expect(driveDisabled.body.code).toBe('SERVICE_DISABLED');
+      expect(driveDisabled.body.error).toContain('Google Drive API has not been used in project 802882631291');
+      expect(driveDisabled.body.activationUrl).toBe(
+        'https://console.developers.google.com/apis/api/drive.googleapis.com/overview?project=802882631291'
       );
-      expect(connectDrive.status).toBe(200);
-      expect(connectDrive.body.user.member_id).toBe('MOCK-66-0001');
-      expect(connectDrive.body.hasDriveAccess).toBe(true);
-      expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-2');
 
-      // 6. Expired stored token on /api/sheets/drive clears google_provider_token and reports tokenExpired: true
+      // 9. Expired stored token on /api/sheets/drive clears google_provider_token and reports tokenExpired: true
       driveStatus = 401;
-      const expired = await call('GET', '/api/sheets/drive', undefined, adm.cookie);
+      const expired = await call('GET', '/api/sheets/drive', undefined, googleLogin.cookie);
       expect(expired.status).toBe(200);
       expect(expired.body.hasDriveAccess).toBe(false);
       expect(expired.body.tokenExpired).toBe(true);
       expect(savedSettings.get('google_provider_token')).toBe('');
 
-      // 7. createSource uses Bearer OAuth token from getAccessToken() without appending ?key=
+      // 10. createSource uses Bearer OAuth token from getAccessToken() without appending ?key=
       let sheetUrl = '';
       let sheetAuth = '';
       const oauthSheetFetch = (async (url: string | URL | Request, init?: RequestInit) => {

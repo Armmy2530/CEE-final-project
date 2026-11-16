@@ -70,6 +70,7 @@
   let showTokenPrompt = $state(false);
   let manualAccessToken = $state('');
   let driveNote = $state('');
+  let driveActivationUrl = $state('');
 
   const filteredDriveFiles = $derived.by(() => {
     const q = driveSearch.trim().toLowerCase();
@@ -80,6 +81,7 @@
   async function loadConfig() {
     loadingConfig = true;
     error = '';
+    driveActivationUrl = '';
     try {
       const cfg = await apiFetch<ConfigResponse>('GET', '/api/sheets/config');
       mode = cfg.mode;
@@ -108,6 +110,7 @@
     if (open) {
       driveNote = '';
       driveSearch = '';
+      driveActivationUrl = '';
       loadConfig();
     }
   });
@@ -140,6 +143,7 @@
     driveLoading = true;
     error = '';
     driveNote = '';
+    driveActivationUrl = '';
     try {
       const res = await fetch(
         accessToken
@@ -147,7 +151,12 @@
           : '/api/sheets/drive'
       );
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Drive error ${res.status}`);
+      if (!res.ok) {
+        if (typeof data.activationUrl === 'string' && data.activationUrl.trim()) {
+          driveActivationUrl = data.activationUrl.trim();
+        }
+        throw new Error(data.error || `Drive error ${res.status}`);
+      }
       if (Array.isArray(data.recentSheets)) recentSheets = data.recentSheets;
       if (typeof data.supabaseOAuthAvailable === 'boolean') {
         supabaseOAuthAvailable = data.supabaseOAuthAvailable;
@@ -377,7 +386,22 @@
       </div>
 
       {#if error}
-        <p class="banner error" role="alert">{error}</p>
+        <div class="banner error" role="alert">
+          <p style="margin:0">{error}</p>
+          {#if driveActivationUrl}
+            <p style="margin:10px 0 0">
+              <a
+                href={driveActivationUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn small primary"
+                id="enableDriveApiLink"
+              >
+                Enable Google Drive API in Google Cloud Console &#8599;
+              </a>
+            </p>
+          {/if}
+        </div>
       {/if}
 
       <div class="sheet-sections">

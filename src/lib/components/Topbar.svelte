@@ -33,6 +33,8 @@
     onMarkSeen,
     onRefresh,
     onOpenSheetPicker,
+    onLinkGoogle,
+    onUnlinkGoogle,
     onLogout,
     children
   }: {
@@ -54,6 +56,8 @@
     onMarkSeen: () => void;
     onRefresh: () => void;
     onOpenSheetPicker?: () => void;
+    onLinkGoogle?: () => void;
+    onUnlinkGoogle?: () => void;
     onLogout: () => void;
     children?: Snippet;
   } = $props();
@@ -191,19 +195,25 @@
 
   <div class="sidebar-bottom">
     <div class="source-card">
-      <button
-        type="button"
-        class="source-card-trigger"
-        id="sourceCardBtn"
-        title="Configure Google Sheet or data source"
-        onclick={() => onOpenSheetPicker?.()}
-      >
+      <div class="source-card-info">
         <span class="source-dot" class:stale></span>
         <span>
           <b>{sourceLabel}</b>
           <small>{syncedLabel}</small>
         </span>
-      </button>
+      </div>
+      {#if user.role === 'admin' && onOpenSheetPicker}
+        <button
+          type="button"
+          class="source-sync-btn"
+          id="openSheetPickerBtn"
+          aria-label="Configure Google Sheet or data source"
+          title="Configure Google Sheet or data source"
+          onclick={() => onOpenSheetPicker?.()}
+        >
+          &middot;&middot;&middot;
+        </button>
+      {/if}
       <button
         type="button"
         class="source-sync-btn"
@@ -236,6 +246,34 @@
       {#if userMenuOpen}
         <div class="user-menu sidebar-user-menu" id="userMenu">
           <div class="user-menu-id" id="userMenuId">Signed in as {user.member_id}</div>
+          {#if user.linkedGoogleEmail}
+            <div class="user-menu-google" id="linkedGoogleStatus">
+              Google linked: <strong>{user.linkedGoogleEmail}</strong>
+            </div>
+            <button
+              class="menu-item"
+              id="unlinkGoogleBtn"
+              type="button"
+              onclick={() => {
+                userMenuOpen = false;
+                onUnlinkGoogle?.();
+              }}
+            >
+              Unlink Google
+            </button>
+          {:else}
+            <button
+              class="menu-item"
+              id="linkGoogleBtn"
+              type="button"
+              onclick={() => {
+                userMenuOpen = false;
+                onLinkGoogle?.();
+              }}
+            >
+              Link Google account
+            </button>
+          {/if}
           <button
             class="menu-item"
             id="logoutBtn"

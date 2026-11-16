@@ -175,6 +175,12 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
       if (isSupaConnected()) {
         trackSync(supa.upsertSetting(key, value, updatedAt));
       }
+    },
+    deleteSetting(key: string) {
+      rawDb.deleteSetting(key);
+      if (isSupaConnected()) {
+        trackSync(supa.deleteSetting?.(key) ?? Promise.resolve(false));
+      }
     }
   };
 
@@ -253,6 +259,55 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     }
   }
 
+  async function cleanupLegacyGoogleUsers(primaryAdminId = 'MOCK-66-0001') {
+    const targetAdmin = rawDb.getUser(primaryAdminId) || rawDb.getUser('MOCK-66-0001');
+    if (!targetAdmin) return;
+
+    const legacyUsers = rawDb
+      .listAllUserRows()
+      .filter((u) => /^GOOGLE-/i.test(u.member_id))
+      .map((u) => u.member_id);
+
+    const legacyIds = new Set<string>(legacyUsers);
+    for (const s of rawDb.listSettings()) {
+      if (s.key.startsWith('google_user_map:') && /^GOOGLE-/i.test(s.value.trim())) {
+        legacyIds.add(s.value.trim());
+      }
+    }
+
+    if (!legacyIds.size) return;
+
+    const now = Date.now();
+    for (const legacyId of legacyIds) {
+      rawDb.reassignSessions(legacyId, targetAdmin.member_id);
+      if (isSupaConnected()) {
+        await supa.reassignSessions?.(legacyId, targetAdmin.member_id);
+      }
+
+      for (const s of rawDb.listSettings()) {
+        if (
+          s.key.startsWith('google_user_map:') &&
+          s.value.trim().toUpperCase() === legacyId.toUpperCase()
+        ) {
+          const emailLower = s.key.slice('google_user_map:'.length).trim().toLowerCase();
+          if (emailLower) {
+            database.setSetting(`google_user_map:${emailLower}`, targetAdmin.member_id, now);
+            database.setSetting(`user_google_email:${targetAdmin.member_id}`, emailLower, now);
+            if (isSupaConnected()) {
+              await supa.upsertSetting(`google_user_map:${emailLower}`, targetAdmin.member_id, now);
+              await supa.upsertSetting(`user_google_email:${targetAdmin.member_id}`, emailLower, now);
+            }
+          }
+        }
+      }
+
+      rawDb.deleteUser(legacyId);
+      if (isSupaConnected()) {
+        await supa.deleteUser(legacyId);
+      }
+    }
+  }
+
   async function ensureSeeded() {
     if (seeded) return;
     if (seeding) return seeding;
@@ -260,7 +315,9 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
       try {
         const r = await sheetSource.getData();
         database.seedFromMembers(r.data.Members);
-        await syncWithSupabase(r.data.Members[0]?.member_id);
+        const primaryAdminId = r.data.Members[0]?.member_id;
+        await syncWithSupabase(primaryAdminId);
+        await cleanupLegacyGoogleUsers(primaryAdminId);
         seeded = true;
       } catch (e) {
         console.error('seed:', (e as Error).message);
@@ -271,16 +328,32 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     return seeding;
   }
 
+  function getLinkedGoogleEmail(memberId: string): string | null {
+    return database.getLinkedGoogleEmail(memberId);
+  }
+
+  function withLinkedGoogleEmail(
+    u: Omit<SessionUser, 'linkedGoogleEmail'> & { linkedGoogleEmail?: string | null }
+  ): SessionUser {
+    return {
+      member_id: u.member_id,
+      full_name: u.full_name,
+      role: u.role,
+      theme: u.theme,
+      linkedGoogleEmail: getLinkedGoogleEmail(u.member_id)
+    };
+  }
+
   async function resolveSession(token: string | undefined | null): Promise<SessionUser | null> {
     if (!token) return null;
     const local = database.getSession(token);
-    if (local) return local;
+    if (local) return withLinkedGoogleEmail(local);
     if (isSupaConnected()) {
       const remote = await supa.getSession(hashSessionToken(token));
       if (remote) {
         rawDb.upsertUserFromRemote(remote.row);
         rawDb.upsertSessionFromRemote(hashSessionToken(token), remote.row.member_id, remote.expires_at);
-        return remote.user;
+        return withLinkedGoogleEmail(remote.user);
       }
     }
     return null;
@@ -303,7 +376,9 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     const r = await sheetSource.getData({ force });
     if (!seeded) {
       database.seedFromMembers(r.data.Members);
-      await syncWithSupabase(r.data.Members[0]?.member_id);
+      const primaryAdminId = r.data.Members[0]?.member_id;
+      await syncWithSupabase(primaryAdminId);
+      await cleanupLegacyGoogleUsers(primaryAdminId);
       seeded = true;
     }
     const cfg = typeof sheetSource.getConfig === 'function' ? sheetSource.getConfig() : undefined;
@@ -326,6 +401,11 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     return await supa.upsertSetting(key, value, updatedAt);
   }
 
+  async function deleteSettingFromSupabase(key: string): Promise<boolean> {
+    if (!isSupaConnected()) return false;
+    return (await supa.deleteSetting?.(key)) ?? false;
+  }
+
   function setSetting(key: string, value: string, updatedAt = Date.now()) {
     database.setSetting(key, value, updatedAt);
   }
@@ -345,12 +425,16 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     loginLimit,
     chatLimit,
     ensureSeeded,
+    cleanupLegacyGoogleUsers,
+    getLinkedGoogleEmail,
+    withLinkedGoogleEmail,
     resolveSession,
     resolveUser,
     getDashboard,
     getDbBackend,
     getSupabaseStatus,
     saveSettingToSupabase,
+    deleteSettingFromSupabase,
     setSetting,
     flushSync
   };

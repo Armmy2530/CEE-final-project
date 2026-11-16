@@ -12,6 +12,19 @@
   let statusMessage = $state('Completing Google sign-in...');
   let error = $state('');
 
+  function surfaceFailure(msg: string, intent: string) {
+    error = msg;
+    if (window.opener && window.opener !== window) {
+      window.opener.postMessage(
+        { type: 'supabase-google-oauth', ok: false, error: msg, intent },
+        window.location.origin
+      );
+      return;
+    }
+    const param = intent === 'login' ? 'authError' : 'oauthError';
+    window.location.replace(`/?${param}=${encodeURIComponent(msg)}`);
+  }
+
   onMount(async () => {
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     const searchParams = new URLSearchParams(window.location.search);
@@ -41,18 +54,14 @@
     }
 
     if (oauthError) {
-      error = oauthError;
-      if (window.opener && window.opener !== window) {
-        window.opener.postMessage(
-          { type: 'supabase-google-oauth', ok: false, error: oauthError },
-          window.location.origin
-        );
-      }
+      sessionStorage.removeItem('oauth_intent');
+      surfaceFailure(oauthError, intent);
       return;
     }
 
     if (!accessToken) {
-      error = 'No OAuth access token was returned in the callback URL.';
+      sessionStorage.removeItem('oauth_intent');
+      surfaceFailure('No OAuth access token was returned in the callback URL.', intent);
       return;
     }
 
@@ -70,6 +79,7 @@
           {
             type: 'supabase-google-oauth',
             ok: true,
+            intent,
             user: res.user,
             hasDriveAccess: res.hasDriveAccess,
             googleEmail: res.googleEmail
@@ -81,16 +91,17 @@
         return;
       }
 
-      window.location.replace(intent === 'drive' ? '/?openSheetPicker=1' : '/');
-    } catch (e) {
-      const msg = (e as Error).message || 'Could not complete Google authentication.';
-      error = msg;
-      if (window.opener && window.opener !== window) {
-        window.opener.postMessage(
-          { type: 'supabase-google-oauth', ok: false, error: msg },
-          window.location.origin
-        );
+      if (intent === 'drive' && res.user.role === 'admin') {
+        window.location.replace('/?openSheetPicker=1');
+      } else if (intent === 'link') {
+        window.location.replace('/?googleLinked=1');
+      } else {
+        window.location.replace('/');
       }
+    } catch (e) {
+      sessionStorage.removeItem('oauth_intent');
+      const msg = (e as Error).message || 'Could not complete Google authentication.';
+      surfaceFailure(msg, intent);
     }
   });
 </script>

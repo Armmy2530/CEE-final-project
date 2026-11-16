@@ -48,6 +48,9 @@ export const GET: RequestHandler = async ({ locals }) => {
 
 export const POST: RequestHandler = async ({ locals, request }) => {
   if (!locals.user) return jsonFail(401, 'Not signed in');
+  if (locals.user.role !== 'admin') {
+    return jsonFail(403, 'Only admins can change the connected Google Sheet');
+  }
   const rt = locals.runtime;
 
   let body: { mode?: unknown; sheetUrlOrId?: unknown; sheetTitle?: unknown };
