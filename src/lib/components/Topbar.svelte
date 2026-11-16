@@ -32,6 +32,7 @@
     onSetTheme,
     onMarkSeen,
     onRefresh,
+    onOpenSheetPicker,
     onLogout,
     children
   }: {
@@ -52,6 +53,7 @@
     onSetTheme: (theme: ThemeMode) => void;
     onMarkSeen: () => void;
     onRefresh: () => void;
+    onOpenSheetPicker?: () => void;
     onLogout: () => void;
     children?: Snippet;
   } = $props();
@@ -189,13 +191,22 @@
 
   <div class="sidebar-bottom">
     <div class="source-card">
-      <span class="source-dot" class:stale></span>
-      <span>
-        <b>{sourceLabel}</b>
-        <small>{syncedLabel}</small>
-      </span>
       <button
         type="button"
+        class="source-card-trigger"
+        id="sourceCardBtn"
+        title="Configure Google Sheet or data source"
+        onclick={() => onOpenSheetPicker?.()}
+      >
+        <span class="source-dot" class:stale></span>
+        <span>
+          <b>{sourceLabel}</b>
+          <small>{syncedLabel}</small>
+        </span>
+      </button>
+      <button
+        type="button"
+        class="source-sync-btn"
         aria-label="Sync data source"
         title="Sync data now"
         disabled={refreshing}
@@ -256,37 +267,25 @@
         {refreshing ? 'Refreshing...' : 'All changes saved'}
       </span>
 
-      <div class="theme-toggle" role="group" aria-label="Theme">
-        <button
-          class="icon-button"
-          id="themeLight"
-          type="button"
-          aria-label="Light mode"
-          title="Light mode"
-          aria-pressed={theme === 'light'}
-          onclick={() => onSetTheme('light')}
-        >
-          &#9788;
-        </button>
-        <button
-          class="icon-button"
-          id="themeDark"
-          type="button"
-          aria-label="Dark mode"
-          title="Dark mode"
-          aria-pressed={theme === 'dark'}
-          onclick={() => onSetTheme('dark')}
-        >
-          &#9790;
-        </button>
-      </div>
+      <button
+        class="icon-button theme-button"
+        id="themeToggle"
+        type="button"
+        aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        aria-pressed={theme === 'dark'}
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        onclick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
+      >
+        {theme === 'dark' ? '☀' : '☾'}
+      </button>
 
       <div class="menu-wrap">
         <button
           class="icon-button notification-button"
           id="bellBtn"
           type="button"
-          aria-label={`Notifications${alerts.length ? `, ${alerts.length} active` : ', none'}`}
+          aria-label={`Notifications${alerts.length ? `, ${alerts.length} active` : ', none'}`
+          }
           aria-haspopup="true"
           aria-expanded={notifOpen}
           onclick={toggleNotif}

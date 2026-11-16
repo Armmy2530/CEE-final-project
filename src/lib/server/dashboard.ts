@@ -4,8 +4,10 @@ import type { AttendanceRecord, EventRecord, MemberRecord, SheetData } from './s
 import type {
   DashboardMember,
   DashboardTransaction,
+  DbBackend,
   ProjectCategory,
-  ProjectLead
+  ProjectLead,
+  SupabaseStatus
 } from '../types';
 
 const ATTENDED = new Set(['Present', 'Late']);
@@ -70,6 +72,10 @@ export interface DashboardPayload {
     source: 'mock' | 'google';
     fetchedAt: number;
     stale: boolean;
+    sheetId?: string;
+    sheetTitle?: string;
+    dbBackend?: DbBackend;
+    supabaseStatus?: SupabaseStatus;
   };
 }
 

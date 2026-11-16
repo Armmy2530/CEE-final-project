@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import { apiFetch } from '$lib/format';
 
   interface ChatBubble {
@@ -130,9 +131,15 @@
 
       <div id="chatLog" class="chat-messages" aria-live="polite">
         {#each messages as m}
-          <div class="chat-bubble" class:user={m.who === 'user'} class:typing={m.typing}>
-            {m.text}
-          </div>
+          {#if m.who === 'bot' && !m.typing}
+            <div class="chat-bubble md-body">
+              <SvelteMarkdown source={m.text} />
+            </div>
+          {:else}
+            <div class="chat-bubble" class:user={m.who === 'user'} class:typing={m.typing}>
+              {m.text}
+            </div>
+          {/if}
         {/each}
       </div>
     </div>

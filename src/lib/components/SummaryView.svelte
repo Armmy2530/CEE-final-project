@@ -10,7 +10,8 @@
     firstName = 'Member',
     onRefresh,
     onOpenProject,
-    onSelectPage
+    onSelectPage,
+    onOpenSheetPicker
   }: {
     dash: DashboardPayload | null;
     loadError: string;
@@ -19,6 +20,7 @@
     onRefresh: () => void;
     onOpenProject: (eventId: string) => void;
     onSelectPage: (page: PageId) => void;
+    onOpenSheetPicker?: () => void;
   } = $props();
 
   let statusFilter = $state<'all' | 'Completed' | 'Scheduled' | 'Cancelled'>('all');
@@ -46,7 +48,7 @@
     if (!dash?.meta) return '';
     const msgs: string[] = [];
     if (dash.meta.source === 'mock') {
-      msgs.push('Showing normalized Mock-Data CSVs. Set GOOGLE_API_KEY and GOOGLE_SHEET_ID to connect Google Sheets.');
+      msgs.push('Showing normalized Mock-Data CSVs. Connect a Google Sheet from Drive or paste a sheet link anytime.');
     }
     if (dash.meta.stale) {
       msgs.push('Google Sheets could not be reached, so the last saved copy is shown.');
@@ -280,7 +282,14 @@
   </div>
 
   {#if bannerMsg}
-    <p id="dataBanner" class="banner" role="status">{bannerMsg}</p>
+    <div id="dataBanner" class="banner banner-row" role="status">
+      <span>{bannerMsg}</span>
+      {#if onOpenSheetPicker}
+        <button type="button" class="btn small" onclick={onOpenSheetPicker}>
+          Connect Google Sheet
+        </button>
+      {/if}
+    </div>
   {/if}
   {#if loadError}
     <p id="loadError" class="banner error" role="alert">{loadError} Showing the last data we have.</p>

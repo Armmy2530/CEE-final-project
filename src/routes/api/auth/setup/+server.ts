@@ -26,7 +26,7 @@ export const POST: RequestHandler = async (event) => {
   }
 
   const id = typeof member_id === 'string' ? normalizeMemberId(member_id) : '';
-  const u = id ? rt.db.getUser(id) : null;
+  const u = id ? await rt.resolveUser(id) : null;
   if (!u || u.pw_hash) {
     return jsonFail(400, 'This ID is not registered or already has a password. Ask an admin to reset it.');
   }
