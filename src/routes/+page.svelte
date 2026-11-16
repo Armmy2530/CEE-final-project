@@ -194,11 +194,92 @@
     pushToast('Data source updated', message, 'ok', true);
   }
 
-  onMount(() => {
-    if (user) {
-      loadDashboard(false, true);
-      startPolling();
+  async function handleRootOAuthHash() {
+    if (typeof window === 'undefined') return false;
+    if (!window.location.hash.includes('access_token=')) return false;
+
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = hashParams.get('access_token') || '';
+    const providerToken = hashParams.get('provider_token') || '';
+    const providerRefreshToken = hashParams.get('provider_refresh_token') || '';
+    const intent = sessionStorage.getItem('oauth_intent') || 'login';
+
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (!accessToken) return false;
+
+    try {
+      const res = await apiFetch<{
+        user: SessionUser;
+        hasDriveAccess: boolean;
+        googleEmail: string;
+      }>('POST', '/api/auth/google', {
+        access_token: accessToken,
+        provider_token: providerToken || undefined,
+        provider_refresh_token: providerRefreshToken || undefined,
+        intent
+      });
+
+      if (window.opener && window.opener !== window) {
+        window.opener.postMessage(
+          {
+            type: 'supabase-google-oauth',
+            ok: true,
+            user: res.user,
+            hasDriveAccess: res.hasDriveAccess,
+            googleEmail: res.googleEmail
+          },
+          window.location.origin
+        );
+        window.close();
+        return true;
+      }
+
+      sessionStorage.removeItem('oauth_intent');
+      if (!user) {
+        enterApp(res.user);
+      } else {
+        user = res.user;
+        await loadDashboard(true, false);
+        startPolling();
+      }
+
+      if (res.hasDriveAccess || intent === 'drive') {
+        sheetPickerOpen = true;
+      }
+      pushToast(
+        'Google account connected!',
+        res.googleEmail ? `Connected as ${res.googleEmail}` : 'Your Google account is now connected.',
+        'ok',
+        true
+      );
+      return true;
+    } catch (e) {
+      pushToast('Google sign-in failed', (e as Error).message || 'Could not complete OAuth login.', 'warning', true);
+      return false;
     }
+  }
+
+  onMount(() => {
+    void (async () => {
+      const handledHash = await handleRootOAuthHash();
+      if (handledHash) return;
+
+      if (user) {
+        loadDashboard(false, true);
+        startPolling();
+        if (typeof window !== 'undefined') {
+          const sp = new URLSearchParams(window.location.search);
+          if (sp.get('openSheetPicker') === '1') {
+            sp.delete('openSheetPicker');
+            const qs = sp.toString();
+            history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+            sheetPickerOpen = true;
+            pushToast('Google account connected!', 'Browse your Google Drive spreadsheets below.', 'ok', true);
+          }
+        }
+      }
+    })();
+
     return () => stopPolling();
   });
 </script>

@@ -35,6 +35,7 @@ import * as setupRoute from '../src/routes/api/auth/setup/+server';
 import * as registerRoute from '../src/routes/api/auth/register/+server';
 import * as loginRoute from '../src/routes/api/auth/login/+server';
 import * as logoutRoute from '../src/routes/api/auth/logout/+server';
+import * as authGoogleRoute from '../src/routes/api/auth/google/+server';
 import * as meRoute from '../src/routes/api/me/+server';
 import * as meThemeRoute from '../src/routes/api/me/theme/+server';
 import * as dashRoute from '../src/routes/api/dashboard/+server';
@@ -443,6 +444,7 @@ function createHarness(
     { pattern: /^\/api\/auth\/register$/, handlers: registerRoute as never },
     { pattern: /^\/api\/auth\/login$/, handlers: loginRoute as never },
     { pattern: /^\/api\/auth\/logout$/, handlers: logoutRoute as never },
+    { pattern: /^\/api\/auth\/google$/, handlers: authGoogleRoute as never },
     { pattern: /^\/api\/me$/, handlers: meRoute as never },
     { pattern: /^\/api\/me\/theme$/, handlers: meThemeRoute as never },
     { pattern: /^\/api\/dashboard$/, handlers: dashRoute as never },
@@ -1264,4 +1266,227 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
     }
   });
 });
+
+// ---- Supabase Google OAuth & Authenticated Drive / Sheets ----
+describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
+  test('GET /api/auth/google returns Supabase authorize URL with Google provider and Drive/Sheets scopes', async () => {
+    const noSupa = createHarness({});
+    try {
+      const missing = await noSupa.call('GET', '/api/auth/google?json=1');
+      expect(missing.status).toBe(400);
+    } finally {
+      noSupa.close();
+    }
+
+    const { call, close } = createHarness({
+      SUPABASE_URL: 'https://demo.supabase.co'
+    });
+    try {
+      const res = await call('GET', '/api/auth/google?intent=drive&json=1');
+      expect(res.status).toBe(200);
+      const authUrl = new URL(res.body.url);
+      expect(authUrl.origin).toBe('https://demo.supabase.co');
+      expect(authUrl.pathname).toBe('/auth/v1/authorize');
+      expect(authUrl.searchParams.get('provider')).toBe('google');
+      expect(authUrl.searchParams.get('redirect_to')).toBe('http://localhost/auth/callback?intent=drive');
+      expect(authUrl.searchParams.get('scopes')).toContain('https://www.googleapis.com/auth/drive.readonly');
+      expect(authUrl.searchParams.get('scopes')).toContain('https://www.googleapis.com/auth/spreadsheets.readonly');
+      expect(authUrl.searchParams.get('access_type')).toBe('offline');
+      expect(authUrl.searchParams.get('prompt')).toBe('consent');
+
+      const redir = await call('GET', '/api/auth/google?intent=login');
+      expect(redir.status).toBe(302);
+      expect(redir.headers.get('location')).toContain('https://demo.supabase.co/auth/v1/authorize');
+    } finally {
+      close();
+    }
+  });
+
+  test('POST /api/auth/google verifies token, stores provider_token, signs in or keeps session, and powers /api/sheets/drive & createSource', async () => {
+    const origFetch = globalThis.fetch;
+    const savedSettings = new Map<string, string>();
+    const mockSupa = {
+      schema: 'public-cee-v2',
+      isEnabled: () => true,
+      getStatus: () => 'connected' as const,
+      probe: async () => 'connected' as const,
+      listUsers: async () => [],
+      getUser: async () => null,
+      upsertUsers: async () => true,
+      deleteUser: async () => true,
+      listSessions: async () => [],
+      getSession: async () => null,
+      upsertSession: async () => true,
+      deleteSession: async () => true,
+      deleteUserSessions: async () => true,
+      listSettings: async () => [],
+      upsertSetting: async (key: string, value: string) => {
+        savedSettings.set(key, value);
+        return true;
+      }
+    };
+
+    let driveStatus = 200;
+    let capturedDriveAuth = '';
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      const hdrs = new Headers(init?.headers);
+      if (u === 'https://demo.supabase.co/auth/v1/user') {
+        if (hdrs.get('authorization') === 'Bearer bad-supa-token') {
+          return new Response(JSON.stringify({ msg: 'invalid token' }), { status: 401 });
+        }
+        return new Response(
+          JSON.stringify({
+            id: 'a1b2c3d4-0000-0000-0000-000000000000',
+            email: 'club.lead@example.com',
+            user_metadata: { full_name: 'Club Lead' }
+          }),
+          { status: 200 }
+        );
+      }
+      if (u.startsWith('https://www.googleapis.com/drive/v3/files')) {
+        capturedDriveAuth = hdrs.get('authorization') || '';
+        if (driveStatus === 401) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        return new Response(
+          JSON.stringify({
+            files: [{ id: '1PrivSheetABC123', name: 'Private Club Sheet 2026', modifiedTime: '2026-11-16T10:00:00Z' }]
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response('Not found', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const { call, close } = createHarness(
+      {
+        SUPABASE_URL: 'https://demo.supabase.co',
+        SUPABASE_PUBLISHABLE_KEY: 'sb_pub_test'
+      },
+      undefined,
+      mockSupa
+    );
+
+    try {
+      // 1. Invalid Supabase token returns 401
+      const bad = await call('POST', '/api/auth/google', { access_token: 'bad-supa-token' });
+      expect(bad.status).toBe(401);
+
+      // 2. Unauthenticated Google login creates admin user + session + saves provider_token
+      const loginRes = await call('POST', '/api/auth/google', {
+        access_token: 'valid-supa-token',
+        provider_token: 'goog-provider-tok-1',
+        intent: 'login'
+      });
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.user.member_id).toBe('GOOGLE-A1B2C3');
+      expect(loginRes.body.user.full_name).toBe('Club Lead');
+      expect(loginRes.body.user.role).toBe('admin');
+      expect(loginRes.body.hasDriveAccess).toBe(true);
+      expect(loginRes.body.googleEmail).toBe('club.lead@example.com');
+      expect(loginRes.cookie).toContain('sid=');
+      expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-1');
+      expect(savedSettings.get('google_connected_email')).toBe('club.lead@example.com');
+
+      // 3. /api/sheets/config exposes supabaseOAuthAvailable, hasDriveToken, googleEmail
+      const cfg = await call('GET', '/api/sheets/config', undefined, loginRes.cookie);
+      expect(cfg.status).toBe(200);
+      expect(cfg.body.supabaseOAuthAvailable).toBe(true);
+      expect(cfg.body.hasDriveToken).toBe(true);
+      expect(cfg.body.googleEmail).toBe('club.lead@example.com');
+
+      // 4. /api/sheets/drive uses stored google_provider_token automatically
+      const driveOk = await call('GET', '/api/sheets/drive', undefined, loginRes.cookie);
+      expect(driveOk.status).toBe(200);
+      expect(capturedDriveAuth).toBe('Bearer goog-provider-tok-1');
+      expect(driveOk.body.hasDriveAccess).toBe(true);
+      expect(driveOk.body.files).toHaveLength(1);
+      expect(driveOk.body.files[0].id).toBe('1PrivSheetABC123');
+
+      // 5. Existing logged-in admin (MOCK-66-0001) keeps their own session when connecting Google Drive
+      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      const connectDrive = await call(
+        'POST',
+        '/api/auth/google',
+        {
+          access_token: 'valid-supa-token',
+          provider_token: 'goog-provider-tok-2',
+          intent: 'drive'
+        },
+        adm.cookie
+      );
+      expect(connectDrive.status).toBe(200);
+      expect(connectDrive.body.user.member_id).toBe('MOCK-66-0001');
+      expect(connectDrive.body.hasDriveAccess).toBe(true);
+      expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-2');
+
+      // 6. Expired stored token on /api/sheets/drive clears google_provider_token and reports tokenExpired: true
+      driveStatus = 401;
+      const expired = await call('GET', '/api/sheets/drive', undefined, adm.cookie);
+      expect(expired.status).toBe(200);
+      expect(expired.body.hasDriveAccess).toBe(false);
+      expect(expired.body.tokenExpired).toBe(true);
+      expect(savedSettings.get('google_provider_token')).toBe('');
+
+      // 7. createSource uses Bearer OAuth token from getAccessToken() without appending ?key=
+      let sheetUrl = '';
+      let sheetAuth = '';
+      const oauthSheetFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        sheetUrl = String(url);
+        sheetAuth = new Headers(init?.headers).get('authorization') || '';
+        return new Response(
+          JSON.stringify({
+            valueRanges: [
+              {
+                range: 'Members!A1:D2',
+                values: [
+                  ['member_id', 'full_name', 'department', 'role'],
+                  ['MOCK-66-0001', 'Aiden Adams', 'Academic', 'President']
+                ]
+              },
+              {
+                range: 'Events!A1:G2',
+                values: [
+                  ['event_id', 'title', 'date', 'end_date', 'location', 'budget_planned', 'status'],
+                  ['EV-01', 'Private Drive Sheet Event', '2026-11-20', '2026-11-20', 'Hall', '5000', 'Scheduled']
+                ]
+              },
+              {
+                range: 'Attendance!A1:F2',
+                values: [
+                  ['attendance_id', 'event_id', 'member_id', 'full_name', 'status', 'participant_type'],
+                  ['ATT-1', 'EV-01', 'MOCK-66-0001', 'Aiden Adams', 'Present', 'Staff']
+                ]
+              },
+              {
+                range: 'Budget!A1:F2',
+                values: [
+                  ['expense_id', 'event_id', 'type', 'category', 'amount', 'date'],
+                  ['TX-1', 'EV-01', 'Expense', 'Food', '800', '2026-11-20']
+                ]
+              }
+            ]
+          }),
+          { status: 200 }
+        );
+      }) as unknown as typeof fetch;
+
+      const src = createSource({
+        env: { GOOGLE_API_KEY: 'api-key-should-be-skipped', GOOGLE_SHEET_ID: '1PrivSheetABC123' },
+        fetchImpl: oauthSheetFetch,
+        getAccessToken: () => 'goog-provider-tok-2'
+      });
+      const sheetRes = await src.getData();
+      expect(sheetAuth).toBe('Bearer goog-provider-tok-2');
+      expect(sheetUrl).not.toContain('key=');
+      expect(sheetRes.source).toBe('google');
+      expect(sheetRes.data.Events[0].title).toBe('Private Drive Sheet Event');
+    } finally {
+      globalThis.fetch = origFetch;
+      close();
+    }
+  });
+});
+
 

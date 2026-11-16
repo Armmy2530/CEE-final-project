@@ -48,7 +48,11 @@ export interface RuntimeOptions {
 
 export function createRuntime({ env = process.env, db, source, supabase }: RuntimeOptions = {}) {
   const rawDb = db || openDb(env.DB_PATH || path.join(process.cwd(), 'data', 'app.db'));
-  const sheetSource = (source || createSource({ env })) as ReturnType<typeof createSource>;
+  const sheetSource = (source ||
+    createSource({
+      env,
+      getAccessToken: () => rawDb.getSetting('google_provider_token')
+    })) as ReturnType<typeof createSource>;
   const tz = env.TZ_NAME || 'Asia/Bangkok';
   const loginLimit = createLimiter(8, 15 * 60 * 1000);
   const chatLimit = createLimiter(20, 60 * 1000);
@@ -317,6 +321,15 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     };
   }
 
+  async function saveSettingToSupabase(key: string, value: string, updatedAt = Date.now()): Promise<boolean> {
+    if (!isSupaConnected()) return false;
+    return await supa.upsertSetting(key, value, updatedAt);
+  }
+
+  function setSetting(key: string, value: string, updatedAt = Date.now()) {
+    database.setSetting(key, value, updatedAt);
+  }
+
   async function flushSync() {
     if (pendingSyncs.size) {
       await Promise.allSettled(Array.from(pendingSyncs));
@@ -337,6 +350,8 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     getDashboard,
     getDbBackend,
     getSupabaseStatus,
+    saveSettingToSupabase,
+    setSetting,
     flushSync
   };
 }
