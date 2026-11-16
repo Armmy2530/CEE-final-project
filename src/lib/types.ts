@@ -6,6 +6,7 @@ export interface SessionUser {
   full_name: string;
   role: UserRole;
   theme: ThemeMode | null;
+  linkedGoogleEmail: string | null;
 }
 
 export interface PublicUser {

@@ -370,7 +370,8 @@ h1 {
   margin-bottom: 10px;
 }
 
-.source-card-trigger {
+.source-card-trigger,
+.source-card-info {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -381,6 +382,9 @@ h1 {
   padding: 4px;
   border-radius: 6px;
   text-align: left;
+}
+
+.source-card-trigger {
   cursor: pointer;
 }
 
@@ -388,12 +392,15 @@ h1 {
   background: var(--surface-2);
 }
 
-.source-card-trigger > span:last-child {
+.source-card-trigger > span:last-child,
+.source-card-info > span:last-child {
   min-width: 0;
 }
 
 .source-card-trigger b,
-.source-card-trigger small {
+.source-card-trigger small,
+.source-card-info b,
+.source-card-info small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -712,6 +719,22 @@ h1 {
   padding: 8px 10px;
   font-size: 11px;
   color: var(--muted);
+}
+
+.user-menu-google {
+  padding: 4px 10px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-google strong {
+  color: var(--text-strong);
+  font-weight: 600;
 }
 
 .menu-item {

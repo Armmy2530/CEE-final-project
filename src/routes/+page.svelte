@@ -23,6 +23,7 @@
   let selectedProjectId = $state<string | null>(null);
   let dash = $state<DashboardPayload | null>(null);
   let loadError = $state('');
+  let authError = $state('');
   let refreshing = $state(false);
   let notifOpen = $state(false);
   let sheetPickerOpen = $state(false);
@@ -30,6 +31,8 @@
   let toasts = $state<ToastItem[]>([]);
   let nextToastId = 1;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const isAdmin = $derived(user?.role === 'admin');
 
   $effect.pre(() => {
     user = data.user;
@@ -146,6 +149,7 @@
   }
 
   function enterApp(u: SessionUser) {
+    authError = '';
     user = u;
     activePage = 'summary';
     if (u.theme === 'light' || u.theme === 'dark') {
@@ -153,6 +157,40 @@
     }
     loadDashboard(false, true);
     startPolling();
+  }
+
+  function openSheetPicker() {
+    if (user?.role === 'admin') {
+      sheetPickerOpen = true;
+    }
+  }
+
+  function handleLinkGoogle() {
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem('oauth_intent', 'link');
+    const popup = window.open(
+      '/api/auth/google?intent=link',
+      'supabase-google-oauth',
+      'width=520,height=640'
+    );
+    if (!popup) {
+      window.location.href = '/api/auth/google?intent=link';
+    }
+  }
+
+  async function handleUnlinkGoogle() {
+    try {
+      const res = await apiFetch<{ ok: boolean; user: SessionUser }>('DELETE', '/api/auth/google');
+      user = res.user;
+      pushToast(
+        'Google account unlinked',
+        'You can link a Google account again anytime from your profile menu.',
+        'ok',
+        true
+      );
+    } catch (e) {
+      pushToast('Could not unlink Google', (e as Error).message, 'warning', true);
+    }
   }
 
   async function handleLogout() {
@@ -194,6 +232,43 @@
     pushToast('Data source updated', message, 'ok', true);
   }
 
+  function handleOAuthWindowMessage(e: MessageEvent) {
+    if (typeof window === 'undefined' || e.origin !== window.location.origin) return;
+    const payload = e.data as {
+      type?: string;
+      ok?: boolean;
+      error?: string;
+      intent?: string;
+      user?: SessionUser;
+      googleEmail?: string;
+    } | null;
+    if (!payload || payload.type !== 'supabase-google-oauth') return;
+
+    if (payload.ok && payload.user) {
+      if (!user) {
+        enterApp(payload.user);
+      } else {
+        user = payload.user;
+      }
+      if (payload.intent === 'link') {
+        pushToast(
+          'Google account linked',
+          payload.googleEmail
+            ? `Linked ${payload.googleEmail} to ${payload.user.member_id}.`
+            : 'Your Google account is now linked.',
+          'ok',
+          true
+        );
+      }
+    } else if (!payload.ok && payload.error) {
+      if (!user) {
+        authError = payload.error;
+      } else if (!sheetPickerOpen) {
+        pushToast('Google linking failed', payload.error, 'warning', true);
+      }
+    }
+  }
+
   async function handleRootOAuthHash() {
     if (typeof window === 'undefined') return false;
     if (!window.location.hash.includes('access_token=')) return false;
@@ -224,6 +299,7 @@
           {
             type: 'supabase-google-oauth',
             ok: true,
+            intent,
             user: res.user,
             hasDriveAccess: res.hasDriveAccess,
             googleEmail: res.googleEmail
@@ -243,18 +319,24 @@
         startPolling();
       }
 
-      if (res.hasDriveAccess || intent === 'drive') {
+      if (intent === 'drive' && res.user.role === 'admin') {
         sheetPickerOpen = true;
       }
       pushToast(
-        'Google account connected!',
+        intent === 'link' ? 'Google account linked!' : 'Google account connected!',
         res.googleEmail ? `Connected as ${res.googleEmail}` : 'Your Google account is now connected.',
         'ok',
         true
       );
       return true;
     } catch (e) {
-      pushToast('Google sign-in failed', (e as Error).message || 'Could not complete OAuth login.', 'warning', true);
+      sessionStorage.removeItem('oauth_intent');
+      const msg = (e as Error).message || 'Could not complete OAuth login.';
+      if (!user) {
+        authError = msg;
+      } else {
+        pushToast('Google sign-in failed', msg, 'warning', true);
+      }
       return false;
     }
   }
@@ -264,19 +346,51 @@
       const handledHash = await handleRootOAuthHash();
       if (handledHash) return;
 
-      if (user) {
-        loadDashboard(false, true);
-        startPolling();
-        if (typeof window !== 'undefined') {
-          const sp = new URLSearchParams(window.location.search);
-          if (sp.get('openSheetPicker') === '1') {
-            sp.delete('openSheetPicker');
-            const qs = sp.toString();
-            history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+      if (typeof window !== 'undefined') {
+        const sp = new URLSearchParams(window.location.search);
+        const qAuthErr = sp.get('authError');
+        const qOauthErr = sp.get('oauthError');
+        const qGoogleLinked = sp.get('googleLinked');
+        const qOpenPicker = sp.get('openSheetPicker');
+
+        if (qAuthErr || qOauthErr || qGoogleLinked || qOpenPicker) {
+          sp.delete('authError');
+          sp.delete('oauthError');
+          sp.delete('googleLinked');
+          sp.delete('openSheetPicker');
+          const qs = sp.toString();
+          history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+        }
+
+        if (qAuthErr) {
+          authError = qAuthErr;
+        }
+        if (qOauthErr) {
+          if (!user) authError = qOauthErr;
+          else pushToast('Google linking failed', qOauthErr, 'warning', true);
+        }
+
+        if (user) {
+          loadDashboard(false, true);
+          startPolling();
+          if (qGoogleLinked === '1') {
+            pushToast(
+              'Google account linked!',
+              user.linkedGoogleEmail
+                ? `Linked ${user.linkedGoogleEmail} to ${user.member_id}.`
+                : 'Your Google account is now linked.',
+              'ok',
+              true
+            );
+          }
+          if (qOpenPicker === '1' && user.role === 'admin') {
             sheetPickerOpen = true;
             pushToast('Google account connected!', 'Browse your Google Drive spreadsheets below.', 'ok', true);
           }
         }
+      } else if (user) {
+        loadDashboard(false, true);
+        startPolling();
       }
     })();
 
@@ -284,8 +398,10 @@
   });
 </script>
 
+<svelte:window onmessage={handleOAuthWindowMessage} />
+
 {#if !user}
-  <AuthView onSuccess={enterApp} />
+  <AuthView onSuccess={enterApp} externalError={authError} />
 {:else}
   <div id="appView" class="app-shell">
     <Topbar
@@ -306,7 +422,9 @@
       onSetTheme={handleSetTheme}
       onMarkSeen={markSeen}
       onRefresh={() => loadDashboard(true, false)}
-      onOpenSheetPicker={() => (sheetPickerOpen = true)}
+      onOpenSheetPicker={isAdmin ? openSheetPicker : undefined}
+      onLinkGoogle={handleLinkGoogle}
+      onUnlinkGoogle={handleUnlinkGoogle}
       onLogout={handleLogout}
     >
       {#if activePage === 'summary'}
@@ -315,19 +433,21 @@
           {loadError}
           {refreshing}
           firstName={user.full_name.split(' ')[0]}
+          {isAdmin}
           onRefresh={() => loadDashboard(true, false)}
           onOpenProject={openProject}
           onSelectPage={selectPage}
-          onOpenSheetPicker={() => (sheetPickerOpen = true)}
+          onOpenSheetPicker={isAdmin ? openSheetPicker : undefined}
         />
       {:else if activePage === 'projects'}
         <ProjectsView
           {dash}
           bind:selectedProjectId
           {refreshing}
+          {isAdmin}
           onRefresh={() => loadDashboard(true, false)}
           onSelectPage={selectPage}
-          onOpenSheetPicker={() => (sheetPickerOpen = true)}
+          onOpenSheetPicker={isAdmin ? openSheetPicker : undefined}
         />
       {:else if activePage === 'calendar'}
         <Calendar
@@ -346,11 +466,13 @@
 
     <ChatWidget firstName={user.full_name.split(' ')[0]} />
 
-    <SheetPickerModal
-      open={sheetPickerOpen}
-      onClose={() => (sheetPickerOpen = false)}
-      onConnected={handleSheetConnected}
-    />
+    {#if isAdmin}
+      <SheetPickerModal
+        open={sheetPickerOpen}
+        onClose={() => (sheetPickerOpen = false)}
+        onConnected={handleSheetConnected}
+      />
+    {/if}
 
     <ToastContainer
       {toasts}

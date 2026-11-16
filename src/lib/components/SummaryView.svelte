@@ -8,6 +8,7 @@
     loadError,
     refreshing,
     firstName = 'Member',
+    isAdmin = false,
     onRefresh,
     onOpenProject,
     onSelectPage,
@@ -17,6 +18,7 @@
     loadError: string;
     refreshing: boolean;
     firstName?: string;
+    isAdmin?: boolean;
     onRefresh: () => void;
     onOpenProject: (eventId: string) => void;
     onSelectPage: (page: PageId) => void;
@@ -284,7 +286,7 @@
   {#if bannerMsg}
     <div id="dataBanner" class="banner banner-row" role="status">
       <span>{bannerMsg}</span>
-      {#if onOpenSheetPicker}
+      {#if isAdmin && onOpenSheetPicker}
         <button type="button" class="btn small" onclick={onOpenSheetPicker}>
           Connect Google Sheet
         </button>

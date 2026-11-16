@@ -4,7 +4,13 @@
 
   type AuthMode = 'login' | 'setup' | 'register';
 
-  let { onSuccess }: { onSuccess: (user: SessionUser) => void } = $props();
+  let {
+    onSuccess,
+    externalError = ''
+  }: {
+    onSuccess: (user: SessionUser) => void;
+    externalError?: string;
+  } = $props();
 
   let mode = $state<AuthMode>('login');
   let memberId = $state('');
@@ -13,6 +19,12 @@
   let confirm = $state('');
   let error = $state('');
   let busy = $state(false);
+
+  $effect(() => {
+    if (externalError) {
+      error = externalError;
+    }
+  });
 
   const title = $derived(
     mode === 'login' ? 'Sign in' : mode === 'setup' ? 'Create your password' : 'Create account'

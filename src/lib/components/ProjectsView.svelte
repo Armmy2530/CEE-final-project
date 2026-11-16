@@ -9,6 +9,7 @@
     dash,
     selectedProjectId = $bindable<string | null>(null),
     refreshing = false,
+    isAdmin = false,
     onRefresh,
     onSelectPage,
     onOpenSheetPicker
@@ -16,6 +17,7 @@
     dash: DashboardPayload | null;
     selectedProjectId?: string | null;
     refreshing?: boolean;
+    isAdmin?: boolean;
     onRefresh?: () => void;
     onSelectPage?: (page: PageId) => void;
     onOpenSheetPicker?: () => void;
@@ -372,7 +374,7 @@
           </small>
         </span>
         <div class="data-source-actions">
-          {#if onOpenSheetPicker}
+          {#if isAdmin && onOpenSheetPicker}
             <button type="button" onclick={onOpenSheetPicker}>
               Connect Google Sheet
             </button>

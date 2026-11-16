@@ -24,6 +24,7 @@ export interface SessionUser {
   full_name: string;
   role: UserRole;
   theme: ThemeMode | null;
+  linkedGoogleEmail: string | null;
 }
 
 export interface PublicUser {
@@ -157,14 +158,22 @@ export function openDb(file: string) {
     sessList: db.prepare('SELECT token_hash, member_id, expires_at FROM sessions WHERE expires_at > ?'),
     sessDel: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
     sessDelUser: db.prepare('DELETE FROM sessions WHERE member_id = ?'),
+    sessReassign: db.prepare('UPDATE sessions SET member_id = ? WHERE member_id = ?'),
     sessPurge: db.prepare('DELETE FROM sessions WHERE expires_at <= ?'),
     settingGet: db.prepare('SELECT key, value, updated_at FROM app_settings WHERE key = ?'),
     settingList: db.prepare('SELECT key, value, updated_at FROM app_settings'),
     settingSet: db.prepare(
       `INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    )
+    ),
+    settingDel: db.prepare('DELETE FROM app_settings WHERE key = ?')
   };
+
+  function getLinkedGoogleEmail(memberId: string): string | null {
+    const row = q.settingGet.get(`user_google_email:${memberId}`) as DbSettingRow | undefined;
+    const val = row?.value?.trim().toLowerCase() || '';
+    return val || null;
+  }
 
   return {
     isMemory: file === ':memory:',
@@ -249,7 +258,15 @@ export function openDb(file: string) {
       const hash = await scrypt(password, salt);
       if (!u || !u.pw_hash) return null;
       const ok = crypto.timingSafeEqual(hash, Buffer.from(u.pw_hash, 'hex'));
-      return ok ? { member_id: u.member_id, full_name: u.full_name, role: u.role, theme: u.theme } : null;
+      return ok
+        ? {
+            member_id: u.member_id,
+            full_name: u.full_name,
+            role: u.role,
+            theme: u.theme,
+            linkedGoogleEmail: getLinkedGoogleEmail(u.member_id)
+          }
+        : null;
     },
     createSession(member_id: string): string {
       const token = crypto.randomBytes(32).toString('hex');
@@ -262,15 +279,25 @@ export function openDb(file: string) {
     },
     getSession(token: string | undefined | null): SessionUser | null {
       if (!token) return null;
-      const row = q.sessGet.get(sha(token), Date.now()) as SessionUser | undefined;
-      return row ? { ...row } : null;
+      const row = q.sessGet.get(sha(token), Date.now()) as
+        | Omit<SessionUser, 'linkedGoogleEmail'>
+        | undefined;
+      if (!row) return null;
+      return {
+        ...row,
+        linkedGoogleEmail: getLinkedGoogleEmail(row.member_id)
+      };
     },
     listSessions(): DbSessionRow[] {
       return (q.sessList.all(Date.now()) as DbSessionRow[]).map((s) => ({ ...s }));
     },
+    reassignSessions(fromMemberId: string, toMemberId: string) {
+      q.sessReassign.run(toMemberId, fromMemberId);
+    },
     deleteSession(token: string | undefined | null) {
       if (token) q.sessDel.run(sha(token));
     },
+    getLinkedGoogleEmail,
     getSetting(key: string): string | null {
       const row = q.settingGet.get(key) as DbSettingRow | undefined;
       return row ? row.value : null;
@@ -281,6 +308,9 @@ export function openDb(file: string) {
     },
     setSetting(key: string, value: string, updatedAt = Date.now()) {
       q.settingSet.run(key, value, updatedAt);
+    },
+    deleteSetting(key: string) {
+      q.settingDel.run(key);
     },
     listSettings(): DbSettingRow[] {
       return (q.settingList.all() as DbSettingRow[]).map((s) => ({ ...s }));

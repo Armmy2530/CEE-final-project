@@ -49,7 +49,8 @@ export const POST: RequestHandler = async (event) => {
         member_id: id,
         full_name: name,
         role,
-        theme: null
+        theme: null,
+        linkedGoogleEmail: null
       }
     },
     201

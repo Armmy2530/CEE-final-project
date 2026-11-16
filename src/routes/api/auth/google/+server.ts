@@ -20,7 +20,8 @@ export const GET: RequestHandler = async ({ locals, url }) => {
     return jsonFail(400, 'SUPABASE_URL is not configured in .env');
   }
 
-  const intent = url.searchParams.get('intent') === 'drive' ? 'drive' : 'login';
+  const rawIntent = url.searchParams.get('intent');
+  const intent = rawIntent === 'drive' ? 'drive' : rawIntent === 'link' ? 'link' : 'login';
   const explicitRedirect = (url.searchParams.get('redirect_to') || '').trim();
   const callbackUrl = explicitRedirect || `${url.origin}/auth/callback?intent=${intent}`;
 
@@ -99,63 +100,81 @@ export const POST: RequestHandler = async (event) => {
 
   const supaId = String(supaUser?.id || '').trim();
   const email = String(supaUser?.email || '').trim();
+  const emailLower = email.toLowerCase();
   if (!supaId && !email) {
     return jsonFail(401, 'Invalid or expired Supabase OAuth token');
   }
 
-  if (providerToken) {
-    const now = Date.now();
-    rt.db.setSetting('google_provider_token', providerToken, now);
-    await rt.saveSettingToSupabase('google_provider_token', providerToken, now);
-    rt.db.setSetting('google_connected_email', email, now);
-    await rt.saveSettingToSupabase('google_connected_email', email, now);
-  }
+  const now = Date.now();
 
+  // Signed-in user linking their Google account (or admin connecting Google Drive)
   if (event.locals.user) {
+    if (!emailLower) {
+      return jsonFail(400, 'Google account did not return an email address.');
+    }
+
+    const memberId = event.locals.user.member_id;
+    const prevEmail = (rt.db.getSetting(`user_google_email:${memberId}`) || '').trim().toLowerCase();
+    if (prevEmail && prevEmail !== emailLower) {
+      rt.db.deleteSetting(`google_user_map:${prevEmail}`);
+      await rt.deleteSettingFromSupabase(`google_user_map:${prevEmail}`);
+    }
+
+    const prevMember = (rt.db.getSetting(`google_user_map:${emailLower}`) || '').trim();
+    if (prevMember && prevMember !== memberId) {
+      rt.db.deleteSetting(`user_google_email:${prevMember}`);
+      await rt.deleteSettingFromSupabase(`user_google_email:${prevMember}`);
+    }
+
+    rt.db.setSetting(`google_user_map:${emailLower}`, memberId, now);
+    await rt.saveSettingToSupabase(`google_user_map:${emailLower}`, memberId, now);
+    rt.db.setSetting(`user_google_email:${memberId}`, emailLower, now);
+    await rt.saveSettingToSupabase(`user_google_email:${memberId}`, emailLower, now);
+
+    const isAdmin = event.locals.user.role === 'admin';
+    if (providerToken && isAdmin) {
+      rt.db.setSetting('google_provider_token', providerToken, now);
+      await rt.saveSettingToSupabase('google_provider_token', providerToken, now);
+      rt.db.setSetting('google_connected_email', emailLower, now);
+      await rt.saveSettingToSupabase('google_connected_email', emailLower, now);
+    }
+
     await rt.flushSync();
+    const updatedUser: SessionUser = {
+      ...event.locals.user,
+      linkedGoogleEmail: emailLower
+    };
     return jsonOk({
-      user: event.locals.user,
-      hasDriveAccess: Boolean(providerToken),
-      googleEmail: email
+      user: updatedUser,
+      hasDriveAccess: Boolean(providerToken && isAdmin),
+      googleEmail: emailLower
     });
   }
 
-  let userRow = null;
-  if (email) {
-    const mappedId = rt.db.getSetting(`google_user_map:${email.toLowerCase()}`);
-    if (mappedId) {
-      userRow = await rt.resolveUser(mappedId);
-    }
-  }
+  // Signed-out user attempting Google Sign-In: MUST match an existing linked club account
+  const mappedMemberId = emailLower
+    ? (rt.db.getSetting(`google_user_map:${emailLower}`) || '').trim()
+    : '';
+  const userRow = mappedMemberId ? await rt.resolveUser(mappedMemberId) : null;
 
   if (!userRow) {
-    const suffix =
-      (supaId || email || 'USER')
-        .replace(/[^A-Za-z0-9_-]/g, '')
-        .slice(0, 6)
-        .toUpperCase() || 'USER';
-    const memberId = `GOOGLE-${suffix}`;
-    userRow = await rt.resolveUser(memberId);
-    if (!userRow) {
-      const displayName =
-        (
-          supaUser.user_metadata?.full_name ||
-          supaUser.user_metadata?.name ||
-          (email ? email.split('@')[0] : '') ||
-          'Google User'
-        )
-          .trim()
-          .slice(0, 80) || 'Google User';
-      rt.db.createUser(memberId, displayName, 'admin');
-      userRow = rt.db.getUser(memberId);
-    }
-    if (email && userRow) {
-      rt.db.setSetting(`google_user_map:${email.toLowerCase()}`, userRow.member_id);
-    }
+    return jsonFail(
+      403,
+      `No club account is linked to ${email || 'this Google account'}. Sign in with your Member ID first, then click "Link Google account" in your profile menu.`
+    );
   }
 
-  if (!userRow) {
-    return jsonFail(500, 'Could not provision Google OAuth user');
+  if (emailLower && rt.getLinkedGoogleEmail(userRow.member_id) !== emailLower) {
+    rt.db.setSetting(`user_google_email:${userRow.member_id}`, emailLower, now);
+    await rt.saveSettingToSupabase(`user_google_email:${userRow.member_id}`, emailLower, now);
+  }
+
+  const isAdmin = userRow.role === 'admin';
+  if (providerToken && isAdmin) {
+    rt.db.setSetting('google_provider_token', providerToken, now);
+    await rt.saveSettingToSupabase('google_provider_token', providerToken, now);
+    rt.db.setSetting('google_connected_email', emailLower, now);
+    await rt.saveSettingToSupabase('google_connected_email', emailLower, now);
   }
 
   const sessionToken = rt.db.createSession(userRow.member_id);
@@ -166,12 +185,45 @@ export const POST: RequestHandler = async (event) => {
     member_id: userRow.member_id,
     full_name: userRow.full_name,
     role: userRow.role,
-    theme: userRow.theme
+    theme: userRow.theme,
+    linkedGoogleEmail: emailLower || rt.getLinkedGoogleEmail(userRow.member_id)
   };
 
   return jsonOk({
     user: sessionUser,
-    hasDriveAccess: Boolean(providerToken),
-    googleEmail: email
+    hasDriveAccess: Boolean(providerToken && isAdmin),
+    googleEmail: emailLower
   });
+};
+
+export const DELETE: RequestHandler = async (event) => {
+  if (!event.locals.user) return jsonFail(401, 'Not signed in');
+  const rt = event.locals.runtime;
+  await rt.ensureSeeded();
+
+  const memberId = event.locals.user.member_id;
+  const linkedEmail = (rt.db.getSetting(`user_google_email:${memberId}`) || '').trim().toLowerCase();
+
+  rt.db.deleteSetting(`user_google_email:${memberId}`);
+  await rt.deleteSettingFromSupabase(`user_google_email:${memberId}`);
+
+  if (linkedEmail) {
+    rt.db.deleteSetting(`google_user_map:${linkedEmail}`);
+    await rt.deleteSettingFromSupabase(`google_user_map:${linkedEmail}`);
+  }
+
+  for (const s of rt.db.listSettings()) {
+    if (s.key.startsWith('google_user_map:') && s.value.trim().toLowerCase() === memberId.toLowerCase()) {
+      rt.db.deleteSetting(s.key);
+      await rt.deleteSettingFromSupabase(s.key);
+    }
+  }
+
+  await rt.flushSync();
+
+  const updatedUser: SessionUser = {
+    ...event.locals.user,
+    linkedGoogleEmail: null
+  };
+  return jsonOk({ ok: true, user: updatedUser });
 };
