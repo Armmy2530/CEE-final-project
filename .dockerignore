@@ -1,0 +1,16 @@
+node_modules
+.svelte-kit
+build
+.vite
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+data/*.db
+data/*.db-*
+tests
+docs
+scripts
+README.md
+.DS_Store
