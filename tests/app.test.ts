@@ -619,6 +619,7 @@ function createHarness(
 
     const json = await response.clone().json().catch(() => ({}));
     const text = await response.clone().text().catch(() => '');
+    const bytes = new Uint8Array(await response.clone().arrayBuffer().catch(() => new ArrayBuffer(0)));
     const sidCookie = setCookieHeaders.find((c) => c.startsWith('sid='))?.split(';')[0] || '';
     const allCookies = setCookieHeaders.map((c) => c.split(';')[0]).join('; ');
 
@@ -627,6 +628,7 @@ function createHarness(
       headers: response.headers,
       body: json as Record<string, any>,
       text,
+      bytes,
       cookie: sidCookie,
       allCookies
     };
@@ -1200,6 +1202,18 @@ describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
       expect(csvExp.status).toBe(200);
       expect(csvExp.headers.get('content-type')).toContain('text/csv');
       expect(csvExp.text).toContain('AC-001');
+
+      // Export XLSX endpoint returns 4-tab Google-Sheet-ready workbook with valid ZIP header (PK\x03\x04)
+      for (const query of ['format=xlsx', 'tab=xlsx']) {
+        const xlsxExp = await call('GET', `/api/sheets/export-csv?${query}`, undefined, adm.cookie);
+        expect(xlsxExp.status).toBe(200);
+        expect(xlsxExp.headers.get('content-type')).toBe(
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        );
+        expect(xlsxExp.headers.get('content-disposition')).toContain('Clubhouse-Google-Sheet-Ready.xlsx');
+        expect(xlsxExp.bytes.length).toBeGreaterThan(1000);
+        expect(Array.from(xlsxExp.bytes.slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
+      }
 
       // Drive endpoint returns recentSheets cleanly when no OAuth token is provided
       const driveRes = await call('GET', '/api/sheets/drive', undefined, adm.cookie);

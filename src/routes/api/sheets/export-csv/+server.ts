@@ -7,12 +7,32 @@ import { TABS, type TabName } from '$lib/server/sheets';
 
 export const GET: RequestHandler = async ({ locals, url }) => {
   if (!locals.user) return jsonFail(401, 'Not signed in');
-  const tab = url.searchParams.get('tab') as TabName | null;
-  if (!tab || !TABS.includes(tab)) {
-    return jsonFail(400, `Invalid tab. Must be one of: ${TABS.join(', ')}`);
+
+  const format = url.searchParams.get('format')?.toLowerCase();
+  const tabParam = url.searchParams.get('tab');
+  const dir = resolveSampleSheetsDir();
+
+  if (format === 'xlsx' || tabParam?.toLowerCase() === 'xlsx') {
+    const xlsxPath = path.join(dir, 'Clubhouse-Google-Sheet-Ready.xlsx');
+    if (!fs.existsSync(xlsxPath)) {
+      return jsonFail(404, 'Clubhouse-Google-Sheet-Ready.xlsx not found');
+    }
+    const bytes = new Uint8Array(fs.readFileSync(xlsxPath));
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'content-disposition': 'attachment; filename="Clubhouse-Google-Sheet-Ready.xlsx"',
+        'cache-control': 'no-store'
+      }
+    });
   }
 
-  const dir = resolveSampleSheetsDir();
+  const tab = tabParam as TabName | null;
+  if (!tab || !TABS.includes(tab)) {
+    return jsonFail(400, `Invalid tab. Must be one of: ${TABS.join(', ')} (or format=xlsx)`);
+  }
+
   const csvPath = path.join(dir, `${tab}.csv`);
   const content = fs.readFileSync(csvPath, 'utf8');
 
