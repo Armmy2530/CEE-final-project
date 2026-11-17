@@ -11,14 +11,18 @@ import argparse
 import csv
 import datetime as dt
 import hashlib
+import math
 import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape, quoteattr
 
 NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 NS = {"main": NS_MAIN}
+NUMERIC_FIELDS = {"budget_planned", "amount"}
+_INVALID_XML_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 FEMALE_NAMES = {
     "Abigail", "Amelia", "Ava", "Charlotte", "Chloe", "Claire", "Ella",
@@ -199,6 +203,158 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> 
         writer.writerows(rows)
 
 
+def index_to_col_ref(idx: int) -> str:
+    letters: list[str] = []
+    n = idx + 1
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters.append(chr(ord("A") + rem))
+    return "".join(reversed(letters))
+
+
+def sanitize_xml_text(val: str) -> str:
+    return _INVALID_XML_RE.sub("", val)
+
+
+def _is_finite_number(val: str) -> bool:
+    try:
+        return math.isfinite(float(val))
+    except ValueError:
+        return False
+
+
+def _build_worksheet_xml(fieldnames: list[str], rows: list[dict[str, str]]) -> str:
+    col_refs = [index_to_col_ref(i) for i in range(len(fieldnames))]
+    row_xmls: list[str] = []
+
+    header_cells = [
+        f'<c r="{col_refs[i]}1" t="inlineStr" s="1"><is><t>{escape(sanitize_xml_text(field))}</t></is></c>'
+        for i, field in enumerate(fieldnames)
+    ]
+    row_xmls.append(f'<row r="1">{"".join(header_cells)}</row>')
+
+    for row_idx, row in enumerate(rows, start=2):
+        cells: list[str] = []
+        for col_idx, field in enumerate(fieldnames):
+            raw = row.get(field, "")
+            val = "" if raw is None else str(raw)
+            ref = f"{col_refs[col_idx]}{row_idx}"
+            stripped = val.strip()
+            if field in NUMERIC_FIELDS and stripped != "" and _is_finite_number(stripped):
+                cells.append(f'<c r="{ref}" s="0"><v>{escape(stripped)}</v></c>')
+            else:
+                clean_val = sanitize_xml_text(val)
+                space_attr = ' xml:space="preserve"' if clean_val != clean_val.strip() else ""
+                cells.append(f'<c r="{ref}" t="inlineStr" s="0"><is><t{space_attr}>{escape(clean_val)}</t></is></c>')
+        row_xmls.append(f'<row r="{row_idx}">{"".join(cells)}</row>')
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<worksheet xmlns="{NS_MAIN}">'
+        '<sheetViews><sheetView workbookViewId="0">'
+        '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+        '</sheetView></sheetViews>'
+        f'<sheetData>{"".join(row_xmls)}</sheetData>'
+        '</worksheet>'
+    )
+
+
+def write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[dict[str, str]]]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    sheet_overrides = "".join(
+        f'<Override PartName="/xl/worksheets/sheet{i}.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        for i in range(1, len(sheets) + 1)
+    )
+    content_types_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/styles.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        f"{sheet_overrides}"
+        "</Types>"
+    )
+
+    root_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/>'
+        "</Relationships>"
+    )
+
+    wb_sheets_xml = "".join(
+        f'<sheet name={quoteattr(name)} sheetId="{i}" r:id="rId{i}"/>'
+        for i, (name, _, _) in enumerate(sheets, start=1)
+    )
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<workbook xmlns="{NS_MAIN}" xmlns:r="{NS_REL}">'
+        f"<sheets>{wb_sheets_xml}</sheets>"
+        "</workbook>"
+    )
+
+    wb_rels_items = "".join(
+        f'<Relationship Id="rId{i}" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        f'Target="worksheets/sheet{i}.xml"/>'
+        for i in range(1, len(sheets) + 1)
+    )
+    styles_rid = len(sheets) + 1
+    wb_rels_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f"{wb_rels_items}"
+        f'<Relationship Id="rId{styles_rid}" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
+        'Target="styles.xml"/>'
+        "</Relationships>"
+    )
+
+    styles_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<styleSheet xmlns="{NS_MAIN}">'
+        '<fonts count="2">'
+        '<font><sz val="11"/><name val="Calibri"/></font>'
+        '<font><b/><sz val="11"/><name val="Calibri"/></font>'
+        "</fonts>"
+        '<fills count="2">'
+        '<fill><patternFill patternType="none"/></fill>'
+        '<fill><patternFill patternType="gray125"/></fill>'
+        "</fills>"
+        '<borders count="1">'
+        "<border><left/><right/><top/><bottom/><diagonal/></border>"
+        "</borders>"
+        '<cellStyleXfs count="1">'
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+        "</cellStyleXfs>"
+        '<cellXfs count="2">'
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>'
+        "</cellXfs>"
+        '<cellStyles count="1">'
+        '<cellStyle name="Normal" xfId="0" builtinId="0"/>'
+        "</cellStyles>"
+        "</styleSheet>"
+    )
+
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml.encode("utf-8"))
+        zf.writestr("_rels/.rels", root_rels_xml.encode("utf-8"))
+        zf.writestr("xl/workbook.xml", workbook_xml.encode("utf-8"))
+        zf.writestr("xl/_rels/workbook.xml.rels", wb_rels_xml.encode("utf-8"))
+        zf.writestr("xl/styles.xml", styles_xml.encode("utf-8"))
+        for i, (_, fieldnames, rows) in enumerate(sheets, start=1):
+            ws_xml = _build_worksheet_xml(fieldnames, rows)
+            zf.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml.encode("utf-8"))
+
+
 def build_members(mastersheet: dict[str, list[list[str]]]) -> list[dict[str, str]]:
     raw_members = rows_to_dicts(mastersheet["club member"])
     members: list[dict[str, str]] = []
@@ -341,15 +497,33 @@ def build_budget(mastersheet: dict[str, list[list[str]]]) -> list[dict[str, str]
     return budget
 
 
+def _write_bundle(out_dir: Path, sheet_specs: list[tuple[str, list[str], list[dict[str, str]]]]) -> Path:
+    for tab_name, fieldnames, rows in sheet_specs:
+        write_csv(out_dir / f"{tab_name}.csv", fieldnames, rows)
+    xlsx_path = out_dir / "Clubhouse-Google-Sheet-Ready.xlsx"
+    write_xlsx(xlsx_path, sheet_specs)
+    return xlsx_path
+
+
 def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     default_src = repo_root.parent / "Mock-Data"
     default_out = repo_root / "sample-sheets"
 
-    parser = argparse.ArgumentParser(description="Normalize Mock-Data xlsx files into 4 canonical CSVs.")
+    parser = argparse.ArgumentParser(
+        description="Normalize Mock-Data xlsx files into 4 canonical CSVs and a 4-tab Google-Sheet-ready .xlsx workbook."
+    )
     parser.add_argument("--src", type=Path, default=default_src, help="Path to Mock-Data directory")
     parser.add_argument("--out", type=Path, default=default_out, help="Path to output sample-sheets directory")
+    parser.add_argument(
+        "--ready-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for Google-Sheet-ready bundle (defaults to <src>/google-sheet-ready)",
+    )
     args = parser.parse_args()
+
+    ready_dir = args.ready_dir if args.ready_dir is not None else (args.src / "google-sheet-ready")
 
     mastersheet = read_xlsx(args.src / "MASTERSHEET.xlsx")
     finance_wb = read_xlsx(args.src / "finance" / "budget_transactions.xlsx")
@@ -361,31 +535,49 @@ def main() -> None:
     attendance = build_attendance(members_wb, members, events)
     budget = build_budget(mastersheet)
 
-    write_csv(
-        args.out / "Members.csv",
-        ["member_id", "full_name", "department", "role", "email", "joined_date", "gender", "year", "major", "member_status"],
-        members,
-    )
-    write_csv(
-        args.out / "Events.csv",
-        ["event_id", "title", "date", "end_date", "location", "description", "budget_planned", "status", "image_url"],
-        events,
-    )
-    write_csv(
-        args.out / "Attendance.csv",
-        ["attendance_id", "event_id", "member_id", "full_name", "check_in_time", "status", "participant_type", "project_role", "gender", "year", "major"],
-        attendance,
-    )
-    write_csv(
-        args.out / "Budget.csv",
-        ["expense_id", "event_id", "type", "category", "amount", "date", "receipt_ref"],
-        budget,
-    )
+    sheet_specs: list[tuple[str, list[str], list[dict[str, str]]]] = [
+        (
+            "Members",
+            ["member_id", "full_name", "department", "role", "email", "joined_date", "gender", "year", "major", "member_status"],
+            members,
+        ),
+        (
+            "Events",
+            ["event_id", "title", "date", "end_date", "location", "description", "budget_planned", "status", "image_url"],
+            events,
+        ),
+        (
+            "Attendance",
+            ["attendance_id", "event_id", "member_id", "full_name", "check_in_time", "status", "participant_type", "project_role", "gender", "year", "major"],
+            attendance,
+        ),
+        (
+            "Budget",
+            ["expense_id", "event_id", "type", "category", "amount", "date", "receipt_ref"],
+            budget,
+        ),
+    ]
+
+    sample_xlsx = _write_bundle(args.out, sheet_specs)
+    ready_xlsx = _write_bundle(ready_dir, sheet_specs)
+
+    for label, xlsx_path in [("sample-sheets", sample_xlsx), ("google-sheet-ready", ready_xlsx)]:
+        verified = read_xlsx(xlsx_path)
+        expected_tabs = [name for name, _, _ in sheet_specs]
+        if list(verified.keys()) != expected_tabs:
+            raise AssertionError(f"{label} workbook tabs mismatch: {list(verified.keys())} != {expected_tabs}")
+        for name, _, rows in sheet_specs:
+            expected_len = len(rows) + 1
+            actual_len = len(verified[name])
+            if actual_len != expected_len:
+                raise AssertionError(f"{label} tab {name} row count mismatch: {actual_len} != {expected_len}")
 
     print(f"Wrote Members.csv: {len(members)} rows")
     print(f"Wrote Events.csv: {len(events)} rows")
     print(f"Wrote Attendance.csv: {len(attendance)} rows")
     print(f"Wrote Budget.csv: {len(budget)} rows")
+    print(f"Wrote {sample_xlsx} (verified tabs: Members={len(members)+1}, Events={len(events)+1}, Attendance={len(attendance)+1}, Budget={len(budget)+1})")
+    print(f"Wrote {ready_xlsx} and CSV copies to {ready_dir}")
 
 
 if __name__ == "__main__":

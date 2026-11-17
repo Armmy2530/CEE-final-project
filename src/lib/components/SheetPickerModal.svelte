@@ -584,7 +584,7 @@
             <div>
               <h3>Built-in Mock-Data &amp; Starter Templates</h3>
               <p class="muted">
-                Switch back to local Mock-Data anytime or download the 4 canonical CSV tabs to import into Google Sheets.
+                Switch back to local Mock-Data anytime, or download the 4-tab <code>.xlsx</code> workbook (upload once to Google Drive &rarr; Open with Google Sheets) or individual <code>.csv</code> tabs.
               </p>
             </div>
             <button
@@ -598,6 +598,9 @@
             </button>
           </div>
           <div class="template-links">
+            <a class="btn small primary" href="/api/sheets/export-csv?format=xlsx" download="Clubhouse-Google-Sheet-Ready.xlsx">
+              &#8615; Clubhouse-Google-Sheet-Ready.xlsx (All 4 tabs)
+            </a>
             <a class="btn small" href="/api/sheets/export-csv?tab=Members" download="Members.csv">
               &#8615; Members.csv
             </a>
