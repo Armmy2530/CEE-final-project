@@ -96,7 +96,7 @@ describe('Dates and Google Sheets normalization', () => {
         range: 'Members!A1:J10',
         values: [
           ['Student_ID', 'Name', 'Committee', 'Role', 'Email', 'Join_Date', 'Gender', 'Year', 'Department'],
-          ['MOCK-66-0001', 'Aiden Adams', 'Academic Affairs', 'President', 'a@example.com', '1/1/2026', 'ชาย', 'Year 2', 'Mechatronics']
+          ['6600000001', 'Aiden Adams', 'Academic Affairs', 'President', 'a@example.com', '1/1/2026', 'ชาย', 'Year 2', 'Mechatronics']
         ]
       },
       {
@@ -111,7 +111,7 @@ describe('Dates and Google Sheets normalization', () => {
         range: 'Attendance!A1:K10',
         values: [
           ['attendance_id', 'Project_ID', 'Student_ID', 'Name', 'check_in_time', 'status', 'Role', 'Department / Year', 'gender'],
-          ['A1', 'AC-001', 'MOCK-66-0001', 'Aiden Adams', '2026-11-20 09:00', 'present', 'IT Head', 'Computer Engineering / Year 3', 'Male']
+          ['A1', 'AC-001', '6600000001', 'Aiden Adams', '2026-11-20 09:00', 'present', 'IT Head', 'Computer Engineering / Year 3', 'Male']
         ]
       },
       {
@@ -127,7 +127,7 @@ describe('Dates and Google Sheets normalization', () => {
 
   test('parseBatchResponse normalizes standard and Mock-Data aliases, statuses, and Income/Expense', () => {
     const d = parseBatchResponse(sheetJson);
-    expect(d.Members[0].member_id).toBe('MOCK-66-0001');
+    expect(d.Members[0].member_id).toBe('6600000001');
     expect(d.Members[0].department).toBe('Academic Affairs');
     expect(d.Members[0].major).toBe('Mechatronics');
     expect(d.Members[0].gender).toBe('Male');
@@ -646,21 +646,21 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       expect(health.body).toEqual({ ok: true, dataSource: 'mock' });
 
       expect((await call('GET', '/api/dashboard')).status).toBe(401);
-      expect((await call('POST', '/api/auth/login', { member_id: 'MOCK-66-0001', password: 'x' })).status).toBe(401);
+      expect((await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'x' })).status).toBe(401);
       expect((await call('POST', '/api/auth/setup', { member_id: 'NOPE99', password: 'longenough1' })).status).toBe(400);
-      expect((await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'short' })).status).toBe(400);
+      expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'short' })).status).toBe(400);
 
-      // Admin setup on MOCK-66-0001
-      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      // Admin setup on 6600000001
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
       expect(adm.status).toBe(200);
       expect(adm.body.user.role).toBe('admin');
 
       // Cannot re-setup an account that already has a password
-      expect((await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'hijack1234' })).status).toBe(400);
+      expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'hijack1234' })).status).toBe(400);
 
       // Login
-      expect((await call('POST', '/api/auth/login', { member_id: 'MOCK-66-0001', password: 'wrongpass1' })).status).toBe(401);
-      const login = await call('POST', '/api/auth/login', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      expect((await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'wrongpass1' })).status).toBe(401);
+      const login = await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'adminpass1' });
       expect(login.status).toBe(200);
 
       // Dashboard returns Mock-Data aggregates
@@ -703,7 +703,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       const created = await call(
         'POST',
         '/api/admin/users',
-        { member_id: 'MOCK-66-9999', full_name: 'New Person', role: 'user' },
+        { member_id: '6600009999', full_name: 'New Person', role: 'user' },
         login.cookie
       );
       expect(created.status).toBe(201);
@@ -712,7 +712,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
           await call(
             'POST',
             '/api/admin/users',
-            { member_id: 'MOCK-66-9999', full_name: 'Dup', role: 'user' },
+            { member_id: '6600009999', full_name: 'Dup', role: 'user' },
             login.cookie
           )
         ).status
@@ -729,15 +729,15 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       ).toBe(400);
 
       // Normal user cannot call admin endpoints
-      const u = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-9999', password: 'userpass99' });
+      const u = await call('POST', '/api/auth/setup', { member_id: '6600009999', password: 'userpass99' });
       expect((await call('GET', '/api/admin/users', undefined, u.cookie)).status).toBe(403);
-      expect((await call('DELETE', '/api/admin/users/MOCK-66-0001', undefined, u.cookie)).status).toBe(403);
+      expect((await call('DELETE', '/api/admin/users/6600000001', undefined, u.cookie)).status).toBe(403);
 
       // Admin cannot delete self / last admin; can reset and delete others
-      expect((await call('DELETE', '/api/admin/users/MOCK-66-0001', undefined, login.cookie)).status).toBe(400);
-      expect((await call('POST', '/api/admin/users/MOCK-66-9999/reset', {}, login.cookie)).status).toBe(200);
+      expect((await call('DELETE', '/api/admin/users/6600000001', undefined, login.cookie)).status).toBe(400);
+      expect((await call('POST', '/api/admin/users/6600009999/reset', {}, login.cookie)).status).toBe(200);
       expect((await call('GET', '/api/me', undefined, u.cookie)).status).toBe(401);
-      expect((await call('DELETE', '/api/admin/users/MOCK-66-9999', undefined, login.cookie)).status).toBe(200);
+      expect((await call('DELETE', '/api/admin/users/6600009999', undefined, login.cookie)).status).toBe(200);
 
       // Chat endpoint
       const chatRes = await call('POST', '/api/chat', { message: 'งบ' }, login.cookie);
@@ -769,7 +769,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
     try {
       let last: Awaited<ReturnType<typeof call>> | null = null;
       for (let i = 0; i < 10; i++) {
-        last = await call('POST', '/api/auth/login', { member_id: 'MOCK-66-0002', password: 'nope' + i });
+        last = await call('POST', '/api/auth/login', { member_id: '6600000002', password: 'nope' + i });
       }
       expect(last?.status).toBe(429);
     } finally {
@@ -785,7 +785,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
     });
 
     try {
-      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
       expect(adm.status).toBe(200);
 
       // 1. OpenRouter succeeds -> mode: 'ai'
@@ -958,23 +958,23 @@ describe('Database legacy migration', () => {
       `);
       legacy
         .prepare('INSERT INTO users (member_id, full_name, role, created_at) VALUES (?,?,?,?)')
-        .run('MOCK-66-0001', 'Aiden Adams', 'admin', 1700000000000);
+        .run('6600000001', 'Aiden Adams', 'admin', 1700000000000);
       legacy.close();
 
       // openDb must migrate `users` by adding `theme` without dropping existing rows
       const migrated = openDb(dbFile);
       try {
-        const uBefore = migrated.getUser('MOCK-66-0001');
+        const uBefore = migrated.getUser('6600000001');
         expect(uBefore).not.toBeNull();
         expect(uBefore?.full_name).toBe('Aiden Adams');
         expect(uBefore?.theme).toBeNull();
 
-        migrated.setTheme('MOCK-66-0001', 'dark');
-        expect(migrated.getUser('MOCK-66-0001')?.theme).toBe('dark');
+        migrated.setTheme('6600000001', 'dark');
+        expect(migrated.getUser('6600000001')?.theme).toBe('dark');
         expect(migrated.listUsers()[0].theme).toBe('dark');
 
-        migrated.setTheme('MOCK-66-0001', 'light');
-        expect(migrated.getUser('MOCK-66-0001')?.theme).toBe('light');
+        migrated.setTheme('6600000001', 'light');
+        expect(migrated.getUser('6600000001')?.theme).toBe('light');
       } finally {
         migrated.close();
       }
@@ -999,19 +999,20 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
     expect(mockSrc).not.toContain('import.meta.dir');
     const data = generateMock('2026-11-16');
     expect(data.Members).toHaveLength(67);
-    expect(data.Members[0].member_id).toBe('MOCK-66-0001');
+    expect(data.Members[0].member_id).toBe('6600000001');
+    expect(data.Members[66].member_id).toBe('6600000067');
   });
 
-  test('seedFromMembers is idempotent and promotes MOCK-66-0001 to admin even if registered early as user', async () => {
+  test('seedFromMembers is idempotent and promotes 6600000001 to admin even if registered early as user', async () => {
     const db = openDb(':memory:');
     try {
-      // Simulate the exact bug state: user clicked Sign up for MOCK-66-0001 with role = 'user' before seeding ran
-      db.createUser('MOCK-66-0001', 'Sutthikan Panla', 'user');
-      await db.setPassword('MOCK-66-0001', 'existingpass1');
-      db.setTheme('MOCK-66-0001', 'dark');
-      const token = db.createSession('MOCK-66-0001');
+      // Simulate the exact bug state: user clicked Sign up for 6600000001 with role = 'user' before seeding ran
+      db.createUser('6600000001', 'Sutthikan Panla', 'user');
+      await db.setPassword('6600000001', 'existingpass1');
+      db.setTheme('6600000001', 'dark');
+      const token = db.createSession('6600000001');
 
-      expect(db.getUser('MOCK-66-0001')?.role).toBe('user');
+      expect(db.getUser('6600000001')?.role).toBe('user');
       expect(db.listUsers()).toHaveLength(1);
 
       // Now seedFromMembers runs with all 67 members
@@ -1019,7 +1020,7 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
 
       const all = db.listUsers();
       expect(all).toHaveLength(67);
-      const admin = db.getUser('MOCK-66-0001')!;
+      const admin = db.getUser('6600000001')!;
       expect(admin.role).toBe('admin');
       expect(admin.full_name).toBe('Sutthikan Panla');
       expect(admin.theme).toBe('dark');
@@ -1027,7 +1028,7 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
 
       // Existing session immediately sees promoted role and password still verifies
       expect(db.getSession(token)?.role).toBe('admin');
-      expect((await db.verifyPassword('mock-66-0001', 'existingpass1'))?.role).toBe('admin');
+      expect((await db.verifyPassword('6600000001', 'existingpass1'))?.role).toBe('admin');
 
       // Re-running seedFromMembers remains idempotent
       db.seedFromMembers(generateMock('2026-11-16').Members);
@@ -1037,7 +1038,7 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
     }
   });
 
-  test('/api/auth/register assigns admin to MOCK-66-0001 when unseeded, and GET /api/me promotes existing session once seeding recovers', async () => {
+  test('/api/auth/register assigns admin to 6600000001 when unseeded, and GET /api/me promotes existing session once seeding recovers', async () => {
     let failSeed = true;
     const mockSource = {
       mode: 'mock' as const,
@@ -1049,14 +1050,14 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
 
     const { call, close } = createHarness({}, mockSource);
     try {
-      // 1. Register MOCK-66-0001 via Sign up while seeding is failing (using lowercase + spaces)
+      // 1. Register 6600000001 via Sign up while seeding is failing (with whitespace)
       const reg = await call('POST', '/api/auth/register', {
-        member_id: '  mock-66-0001  ',
+        member_id: '  6600000001  ',
         full_name: 'Sutthikan Panla',
         password: 'adminpass123'
       });
       expect(reg.status).toBe(201);
-      expect(reg.body.user.member_id).toBe('MOCK-66-0001');
+      expect(reg.body.user.member_id).toBe('6600000001');
       expect(reg.body.user.role).toBe('admin');
 
       // 2. Seeding recovers -> GET /api/me runs ensureSeeded() and seeds remaining 66 members
@@ -1069,22 +1070,23 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
       expect(usersRes.status).toBe(200);
       expect(usersRes.body.users).toHaveLength(67);
 
-      // 3. Case-insensitive & trimmed setup + login for MOCK-66-0002
+      // 3. Trimmed setup + login for 6600000002 (and normalizeMemberId still normalizes legacy mock/st prefixes)
       expect(normalizeMemberId('  mock-66-0002 ')).toBe('MOCK-66-0002');
+      expect(normalizeMemberId('  6600000002 ')).toBe('6600000002');
       const setup2 = await call('POST', '/api/auth/setup', {
-        member_id: ' mock-66-0002 ',
+        member_id: ' 6600000002 ',
         password: 'memberpass1'
       });
       expect(setup2.status).toBe(200);
-      expect(setup2.body.user.member_id).toBe('MOCK-66-0002');
+      expect(setup2.body.user.member_id).toBe('6600000002');
       expect(setup2.body.user.role).toBe('user');
 
       const login2 = await call('POST', '/api/auth/login', {
-        member_id: 'mock-66-0002',
+        member_id: '6600000002',
         password: 'memberpass1'
       });
       expect(login2.status).toBe(200);
-      expect(login2.body.user.member_id).toBe('MOCK-66-0002');
+      expect(login2.body.user.member_id).toBe('6600000002');
     } finally {
       close();
     }
@@ -1106,9 +1108,9 @@ describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
 
   test('createSource fetches keyless public gviz CSV tabs and rejects private HTML responses', async () => {
     const csvTabs: Record<string, string> = {
-      Members: 'Member_ID,Full_Name,Department,Role\nMOCK-66-0001,Aiden Adams,Academic Affairs,President\n',
+      Members: 'Member_ID,Full_Name,Department,Role\n6600000001,Aiden Adams,Academic Affairs,President\n',
       Events: 'Event_ID,Title,Date,End_Date,Location,Budget_Planned,Status\nEV-01,Workshop,2026-11-20,2026-11-20,Room 101,5000,Scheduled\n',
-      Attendance: 'Attendance_ID,Event_ID,Member_ID,Full_Name,Status,Participant_Type\nATT-1,EV-01,MOCK-66-0001,Aiden Adams,Present,Staff\n',
+      Attendance: 'Attendance_ID,Event_ID,Member_ID,Full_Name,Status,Participant_Type\nATT-1,EV-01,6600000001,Aiden Adams,Present,Staff\n',
       Budget: 'Expense_ID,Event_ID,Type,Category,Amount,Date\nTX-1,EV-01,Expense,Food,1200,2026-11-20\n'
     };
 
@@ -1146,9 +1148,9 @@ describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
 
   test('POST /api/sheets/config switches between google (gviz CSV) and mock modes and persists config', async () => {
     const csvTabs: Record<string, string> = {
-      Members: 'Member_ID,Full_Name,Department,Role\nMOCK-66-0001,Aiden Adams,Academic Affairs,President\n',
+      Members: 'Member_ID,Full_Name,Department,Role\n6600000001,Aiden Adams,Academic Affairs,President\n',
       Events: 'Event_ID,Title,Date,End_Date,Location,Budget_Planned,Status\nEV-10,Robotics Talk,2026-11-25,2026-11-25,Hall,8000,Scheduled\n',
-      Attendance: 'Attendance_ID,Event_ID,Member_ID,Full_Name,Status,Participant_Type\nATT-10,EV-10,MOCK-66-0001,Aiden Adams,Present,Staff\n',
+      Attendance: 'Attendance_ID,Event_ID,Member_ID,Full_Name,Status,Participant_Type\nATT-10,EV-10,6600000001,Aiden Adams,Present,Staff\n',
       Budget: 'Expense_ID,Event_ID,Type,Category,Amount,Date\nTX-10,EV-10,Expense,Venue,2500,2026-11-25\n'
     };
 
@@ -1163,7 +1165,7 @@ describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
     const src = createSource({ env: {}, fetchImpl: gvizFetch });
     const { call, close } = createHarness({}, src);
     try {
-      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
       expect(adm.status).toBe(200);
 
       const cfg0 = await call('GET', '/api/sheets/config', undefined, adm.cookie);
@@ -1259,7 +1261,7 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
       });
       calls.push({ url: String(url), method: init?.method || 'GET', headers: hdrs });
       if ((init?.method || 'GET') === 'GET') {
-        return new Response(JSON.stringify([{ member_id: 'MOCK-66-0001' }]), { status: 200 });
+        return new Response(JSON.stringify([{ member_id: '6600000001' }]), { status: 200 });
       }
       return new Response('', { status: 201 });
     }) as typeof fetch;
@@ -1340,9 +1342,9 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
 
     const { call, close } = createHarness({}, undefined, mockSupa);
     try {
-      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
       expect(adm.status).toBe(200);
-      expect(upsertedUsers).toContain('MOCK-66-0001');
+      expect(upsertedUsers).toContain('6600000001');
 
       const dash = await call('GET', '/api/dashboard', undefined, adm.cookie);
       expect(dash.status).toBe(200);
@@ -1514,8 +1516,8 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       expect(unlinkedRes.body.error).toContain('No club account is linked to club.lead@example.com');
       expect(savedSettings.has('google_provider_token')).toBe(false);
 
-      // 3. Admin (MOCK-66-0001) sets up password -> linkedGoogleEmail starts null
-      const adm = await call('POST', '/api/auth/setup', { member_id: 'MOCK-66-0001', password: 'adminpass1' });
+      // 3. Admin (6600000001) sets up password -> linkedGoogleEmail starts null
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
       expect(adm.status).toBe(200);
       expect(adm.body.user.linkedGoogleEmail).toBeNull();
 
@@ -1537,34 +1539,34 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
         adm.cookie
       );
       expect(linkAdm.status).toBe(200);
-      expect(linkAdm.body.user.member_id).toBe('MOCK-66-0001');
+      expect(linkAdm.body.user.member_id).toBe('6600000001');
       expect(linkAdm.body.user.linkedGoogleEmail).toBe('club.lead@example.com');
       expect(linkAdm.body.hasDriveAccess).toBe(true);
-      expect(savedSettings.get('google_user_map:club.lead@example.com')).toBe('MOCK-66-0001');
-      expect(savedSettings.get('user_google_email:MOCK-66-0001')).toBe('club.lead@example.com');
+      expect(savedSettings.get('google_user_map:club.lead@example.com')).toBe('6600000001');
+      expect(savedSettings.get('user_google_email:6600000001')).toBe('club.lead@example.com');
       expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-1');
       expect(savedSettings.get('google_connected_email')).toBe('club.lead@example.com');
 
       const meLinked = await call('GET', '/api/me', undefined, adm.cookie);
       expect(meLinked.body.user.linkedGoogleEmail).toBe('club.lead@example.com');
 
-      // 5. Subsequent unauthenticated Google Sign-In resolves to MOCK-66-0001 (not GOOGLE-XXXXXX)
+      // 5. Subsequent unauthenticated Google Sign-In resolves to 6600000001 (not GOOGLE-XXXXXX)
       const googleLogin = await call('POST', '/api/auth/google', {
         access_token: 'valid-supa-token',
         provider_token: 'goog-provider-tok-2',
         intent: 'login'
       });
       expect(googleLogin.status).toBe(200);
-      expect(googleLogin.body.user.member_id).toBe('MOCK-66-0001');
+      expect(googleLogin.body.user.member_id).toBe('6600000001');
       expect(googleLogin.body.user.role).toBe('admin');
       expect(googleLogin.body.user.linkedGoogleEmail).toBe('club.lead@example.com');
       expect(googleLogin.cookie).toContain('sid=');
       expect(savedSettings.get('google_provider_token')).toBe('goog-provider-tok-2');
 
-      // 6. Normal user (MOCK-66-0002) links their own Google account, does NOT overwrite Drive token,
+      // 6. Normal user (6600000002) links their own Google account, does NOT overwrite Drive token,
       //    and receives 403 on POST /api/sheets/config and GET /api/sheets/drive
       const normalUser = await call('POST', '/api/auth/setup', {
-        member_id: 'MOCK-66-0002',
+        member_id: '6600000002',
         password: 'memberpass1'
       });
       expect(normalUser.status).toBe(200);
@@ -1582,7 +1584,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
         normalUser.cookie
       );
       expect(linkMember.status).toBe(200);
-      expect(linkMember.body.user.member_id).toBe('MOCK-66-0002');
+      expect(linkMember.body.user.member_id).toBe('6600000002');
       expect(linkMember.body.user.linkedGoogleEmail).toBe('member.two@example.com');
       expect(linkMember.body.hasDriveAccess).toBe(false);
       // Admin's global Drive token was NOT overwritten by normal user
@@ -1601,13 +1603,13 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       expect(nonAdminDrive.status).toBe(403);
       expect(nonAdminDrive.body.error).toContain('Only admins');
 
-      // Unauthenticated Google login as member.two@example.com signs in as MOCK-66-0002
+      // Unauthenticated Google login as member.two@example.com signs in as 6600000002
       const memberGoogleLogin = await call('POST', '/api/auth/google', {
         access_token: 'valid-supa-token',
         intent: 'login'
       });
       expect(memberGoogleLogin.status).toBe(200);
-      expect(memberGoogleLogin.body.user.member_id).toBe('MOCK-66-0002');
+      expect(memberGoogleLogin.body.user.member_id).toBe('6600000002');
       expect(memberGoogleLogin.body.user.role).toBe('user');
 
       // DELETE /api/auth/google unlinks member.two@example.com -> subsequent Google login returns 403
@@ -1615,7 +1617,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       expect(unlinkMember.status).toBe(200);
       expect(unlinkMember.body.user.linkedGoogleEmail).toBeNull();
       expect(savedSettings.has('google_user_map:member.two@example.com')).toBe(false);
-      expect(savedSettings.has('user_google_email:MOCK-66-0002')).toBe(false);
+      expect(savedSettings.has('user_google_email:6600000002')).toBe(false);
 
       const afterUnlink = await call('POST', '/api/auth/google', {
         access_token: 'valid-supa-token',
@@ -1671,7 +1673,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
                 range: 'Members!A1:D2',
                 values: [
                   ['member_id', 'full_name', 'department', 'role'],
-                  ['MOCK-66-0001', 'Aiden Adams', 'Academic', 'President']
+                  ['6600000001', 'Aiden Adams', 'Academic', 'President']
                 ]
               },
               {
@@ -1685,7 +1687,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
                 range: 'Attendance!A1:F2',
                 values: [
                   ['attendance_id', 'event_id', 'member_id', 'full_name', 'status', 'participant_type'],
-                  ['ATT-1', 'EV-01', 'MOCK-66-0001', 'Aiden Adams', 'Present', 'Staff']
+                  ['ATT-1', 'EV-01', '6600000001', 'Aiden Adams', 'Present', 'Staff']
                 ]
               },
               {
@@ -1716,6 +1718,109 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       close();
     }
   });
-});
 
+  test('ensureSeeded idempotently migrates legacy MOCK-66-0001..0067 rows, sessions, and Google links to 6600000001..6600000067', async () => {
+    const db = openDb(':memory:');
+    db.createUser('MOCK-66-0001', 'Sutthikan Panla', 'admin');
+    await db.setPassword('MOCK-66-0001', 'adminpass1');
+    db.setTheme('MOCK-66-0001', 'light');
+    const sessToken = db.createSession('MOCK-66-0001');
+    db.setSetting('google_user_map:sutigran2557@gmail.com', 'MOCK-66-0001', 1000);
+    db.setSetting('user_google_email:MOCK-66-0001', 'sutigran2557@gmail.com', 1000);
+
+    const deletedUsers: string[] = [];
+    const deletedSettings: string[] = [];
+    const reassigned: Array<[string, string]> = [];
+    const savedSettings = new Map<string, string>();
+    const upsertedUserIds = new Set<string>();
+
+    const mockSupa = {
+      schema: 'public-cee-v2',
+      isEnabled: () => true,
+      getStatus: () => 'connected' as const,
+      probe: async () => 'connected' as const,
+      listUsers: async () => [
+        {
+          member_id: 'MOCK-66-0001',
+          full_name: 'Sutthikan Panla',
+          role: 'admin' as const,
+          pw_hash: null,
+          pw_salt: null,
+          theme: 'light' as const,
+          created_at: 1000
+        },
+        {
+          member_id: 'MOCK-66-0002',
+          full_name: 'Ella Johnson',
+          role: 'user' as const,
+          pw_hash: null,
+          pw_salt: null,
+          theme: null,
+          created_at: 1000
+        }
+      ],
+      getUser: async () => null,
+      upsertUsers: async (users: Array<{ member_id: string }>) => {
+        for (const u of users) upsertedUserIds.add(u.member_id);
+        return true;
+      },
+      deleteUser: async (id: string) => {
+        deletedUsers.push(id);
+        return true;
+      },
+      listSessions: async () => [],
+      getSession: async () => null,
+      upsertSession: async () => true,
+      deleteSession: async () => true,
+      deleteUserSessions: async () => true,
+      reassignSessions: async (fromId: string, toId: string) => {
+        reassigned.push([fromId, toId]);
+        return true;
+      },
+      listSettings: async () => [
+        { key: 'google_user_map:sutigran2557@gmail.com', value: 'MOCK-66-0001', updated_at: 1000 },
+        { key: 'user_google_email:MOCK-66-0001', value: 'sutigran2557@gmail.com', updated_at: 1000 }
+      ],
+      upsertSetting: async (k: string, v: string) => {
+        savedSettings.set(k, v);
+        return true;
+      },
+      deleteSetting: async (k: string) => {
+        deletedSettings.push(k);
+        return true;
+      }
+    };
+
+    const rt = createRuntime({ db, supabase: mockSupa });
+    try {
+      await rt.ensureSeeded();
+
+      // Legacy MOCK-66-0001 is deleted and replaced by 6600000001 with preserved name, password, theme, session, Google link
+      expect(db.getUser('MOCK-66-0001')).toBeNull();
+      const admin = db.getUser('6600000001');
+      expect(admin).not.toBeNull();
+      expect(admin?.full_name).toBe('Sutthikan Panla');
+      expect(admin?.role).toBe('admin');
+      expect(admin?.theme).toBe('light');
+      expect(await db.verifyPassword('6600000001', 'adminpass1')).not.toBeNull();
+
+      const sess = db.getSession(sessToken);
+      expect(sess?.member_id).toBe('6600000001');
+      expect(sess?.linkedGoogleEmail).toBe('sutigran2557@gmail.com');
+
+      expect(db.getSetting('google_user_map:sutigran2557@gmail.com')).toBe('6600000001');
+      expect(db.getSetting('user_google_email:6600000001')).toBe('sutigran2557@gmail.com');
+      expect(db.getSetting('user_google_email:MOCK-66-0001')).toBeNull();
+
+      expect(deletedUsers).toContain('MOCK-66-0001');
+      expect(deletedSettings).toContain('user_google_email:MOCK-66-0001');
+      expect(reassigned).toContainEqual(['MOCK-66-0001', '6600000001']);
+      expect(savedSettings.get('google_user_map:sutigran2557@gmail.com')).toBe('6600000001');
+      expect(savedSettings.get('user_google_email:6600000001')).toBe('sutigran2557@gmail.com');
+      expect(db.listUsers()).toHaveLength(67);
+    } finally {
+      db.close();
+    }
+  });
+});
 

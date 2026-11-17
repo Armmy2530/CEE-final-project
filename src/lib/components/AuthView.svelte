@@ -145,13 +145,13 @@
     </div>
 
     <form id="authForm" novalidate onsubmit={handleSubmit}>
-      <label for="authId">Member ID</label>
+      <label for="authId">Student ID / Member ID</label>
       <input
         id="authId"
         name="member_id"
         autocomplete="username"
         autocapitalize="characters"
-        placeholder="e.g. MOCK-66-0001"
+        placeholder="e.g. 6600000001"
         bind:value={memberId}
         required
       />
@@ -232,8 +232,8 @@
     </button>
 
     <p class="hint demo-hint">
-      Demo data only. In the normalized mock dataset, <strong>MOCK-66-0001</strong> is the Admin and
-      <strong>MOCK-66-0002&ndash;MOCK-66-0067</strong> are Members (use <em>First time? Set password</em>).
+      Demo data only. In the normalized dataset, <strong>6600000001</strong> is the Admin and
+      <strong>6600000002&ndash;6600000067</strong> are Members (use <em>First time? Set password</em>).
       Or create a brand-new account via <em>Sign up</em>.
     </p>
   </div>

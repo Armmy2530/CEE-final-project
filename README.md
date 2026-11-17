@@ -2,7 +2,7 @@
 
 Web dashboard for a student club committee built with **Bun + SvelteKit 2 (Svelte 5) + `bun:sqlite` + Google Sheets API v4 + OpenRouter AI**. Reads one Google Sheet (or the normalized `sample-sheets/*.csv` mock dataset) and provides summary metrics, interactive SVG charts, a Google Calendar-style Month & Week calendar, project details, automatic budget/upcoming alerts, database-persisted Light/Dark themes, 3-mode account authentication, and an OpenRouter AI chatbox.
 
-> All data in this repo is **mock data** (`MOCK-66-0001`–`MOCK-66-0067`, `AC-001`–`AC-020`) with fictional names. Do not put real names, student IDs, phone numbers, or photos in public sheets.
+> All data in this repo is **mock data** (`6600000001`–`6600000067`, `AC-001`–`AC-020`) with fictional names. Do not put real names, student IDs, phone numbers, or photos in public sheets.
 
 ## Features
 
@@ -11,7 +11,7 @@ Web dashboard for a student club committee built with **Bun + SvelteKit 2 (Svelt
 | Summary | Metric cards (total members, total events, actual budget spent vs planned/income) and interactive SVG charts (attendance per event, planned vs actual budget with hover tooltips, legend toggles, status filter, and "view as table"). |
 | Calendar | Google Calendar-style **Month & Week** switcher (`Today`, `‹`, `›`), multi-day spanning banners (`Day x–y of n`), 7-column daily agendas, and click-to-project navigation straight into Project Data details. |
 | Project data | Relevance **search box** (ranks by project name, tolerates typos, Thai + English) + **Sort** (`Best match`, `Newest`, `Oldest`, `A–Z`) + project cards. Detail view shows venue, status (`ดำเนินการ` / `ปิดโครงการ` / `ยกเลิก`), multi-day schedule (`Day 1 ... Day n`), staff & participant counts, **Attendance breakdown** (`Gender / Year / Major` for the project's year), and **Budget** actual vs planned expenses. |
-| Accounts & Auth | 3-mode auth (**Sign in**, **First time? Set password**, **Sign up**) with server-enforced roles: **Admin** (`MOCK-66-0001`) and **Normal user** (`MOCK-66-0002`–`MOCK-66-0067`). Admins also get a **Users** tab to create users, reset passwords, and delete users. |
+| Accounts & Auth | 3-mode auth (**Sign in**, **First time? Set password**, **Sign up**) with server-enforced roles: **Admin** (`6600000001`) and **Normal user** (`6600000002`–`6600000067`). Admins also get a **Users** tab to create users, reset passwords, and delete users. |
 | Theme | Light / Dark toggle persisted in **SQLite (`bun:sqlite`)** per account (`PATCH /api/me/theme`), rendered via SSR `data-theme` + inline `<head>` script for zero-flash first paint, and synced to `localStorage` for offline/unauthenticated visits. |
 | Alerts | Automatic in-app alerts (bell + toast): budget spending at **&ge; 80%** of plan (warning / &ge; 100% critical) and `Scheduled` events starting within **3 days**. |
 | AI chatbox | Bottom-right assistant powered by **OpenRouter AI** (`google/gemini-2.5-flash` default, configurable via `OPENROUTER_MODEL`) with privacy-safe club/project/category aggregates, plus an enhanced Thai & English offline answerer when no API key is configured. |
@@ -48,8 +48,8 @@ python3 scripts/build-mock-sheets.py   # regenerate canonical sample-sheets/*.cs
 ```
 
 Mock accounts (seeded from `Members` on first start into `data/app.db`):
-- **`MOCK-66-0001`** is **Admin**.
-- **`MOCK-66-0002`** – **`MOCK-66-0067`** are **Members**.
+- **`6600000001`** is **Admin**.
+- **`6600000002`** – **`6600000067`** are **Members**.
 - Open the app, select **First time? Set password**, enter the member ID and a password (8+ characters), or create a new account via **Sign up**.
 
 ## Connect Google Sheets

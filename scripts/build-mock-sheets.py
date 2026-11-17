@@ -355,13 +355,20 @@ def write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[dict[str, str
             zf.writestr(f"xl/worksheets/sheet{i}.xml", ws_xml.encode("utf-8"))
 
 
-def build_members(mastersheet: dict[str, list[list[str]]]) -> list[dict[str, str]]:
+def build_members(
+    mastersheet: dict[str, list[list[str]]],
+) -> tuple[list[dict[str, str]], dict[str, str]]:
     raw_members = rows_to_dicts(mastersheet["club member"])
     members: list[dict[str, str]] = []
-    for r in raw_members:
+    raw_id_to_new_id: dict[str, str] = {}
+    for idx, r in enumerate(raw_members, start=1):
         full_name = r["Name"]
+        student_id = str(6600000000 + idx)
+        raw_sid = (r.get("Student_ID") or "").strip()
+        if raw_sid:
+            raw_id_to_new_id[raw_sid] = student_id
         members.append({
-            "member_id": r["Student_ID"],
+            "member_id": student_id,
             "full_name": full_name,
             "department": r["Committee"],
             "role": r["Role"],
@@ -372,7 +379,7 @@ def build_members(mastersheet: dict[str, list[list[str]]]) -> list[dict[str, str
             "major": r["Department"],
             "member_status": r["Member_Status"],
         })
-    return members
+    return members, raw_id_to_new_id
 
 
 def build_events(
@@ -413,9 +420,12 @@ def build_attendance(
     members_wb: dict[str, list[list[str]]],
     members: list[dict[str, str]],
     events: list[dict[str, str]],
+    raw_id_to_new_id: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     member_by_name = {m["full_name"]: m for m in members}
     event_start_by_id = {e["event_id"]: e["date"] for e in events}
+    id_map = dict(raw_id_to_new_id) if raw_id_to_new_id is not None else {}
+    next_non_member_num = 6600000000 + len(members) + 1
 
     attendance: list[dict[str, str]] = []
     seq = 1
@@ -443,7 +453,14 @@ def build_attendance(
                 member_id = matched["member_id"]
                 gender = matched["gender"]
             else:
-                member_id = r["Student_ID"]
+                raw_sid = (r.get("Student_ID") or "").strip()
+                if raw_sid and raw_sid in id_map:
+                    member_id = id_map[raw_sid]
+                else:
+                    member_id = str(next_non_member_num)
+                    next_non_member_num += 1
+                    if raw_sid:
+                        id_map[raw_sid] = member_id
                 gender = infer_gender(full_name)
 
             roll = deterministic_pct(f"{eid}:{row_idx}:{member_id}")
@@ -530,9 +547,9 @@ def main() -> None:
     projects_wb = read_xlsx(args.src / "sec" / "academic_club_projects.xlsx")
     members_wb = read_xlsx(args.src / "sec" / "academic_club_members.xlsx")
 
-    members = build_members(mastersheet)
+    members, raw_id_to_new_id = build_members(mastersheet)
     events = build_events(projects_wb, finance_wb)
-    attendance = build_attendance(members_wb, members, events)
+    attendance = build_attendance(members_wb, members, events, raw_id_to_new_id)
     budget = build_budget(mastersheet)
 
     sheet_specs: list[tuple[str, list[str], list[dict[str, str]]]] = [
