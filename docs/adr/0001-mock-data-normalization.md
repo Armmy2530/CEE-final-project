@@ -30,11 +30,11 @@ The raw club dataset in `../Mock-Data/` is split across four Excel workbooks wit
 
 We introduce a deterministic, zero-dependency Python 3 standard-library script ([`scripts/build-mock-sheets.py`](../../scripts/build-mock-sheets.py) using `zipfile` + `xml.etree.ElementTree`) that reads all four source `.xlsx` workbooks directly and emits four canonical CSV tabs in `sample-sheets/`:
 
-1. **`sample-sheets/Members.csv`** (67 rows, `MOCK-66-0001`..`MOCK-66-0067`)
+1. **`sample-sheets/Members.csv`** (67 rows, `6600000001`..`6600000067`)
    - Columns: `member_id,full_name,department,role,email,joined_date,gender,year,major,member_status`
-   - Maps `Student_ID -> member_id`, `Name -> full_name`, `Committee -> department`, `Role -> role`, `Email -> email`, `Join_Date -> joined_date` (ISO `YYYY-MM-DD`), `Department -> major`, `Year` (`Year N -> N`) -> `year`, and `Member_Status -> member_status`.
+   - Maps the 67 raw club members (`MOCK-66-0001`..`MOCK-66-0067`) sequentially to 10-digit student IDs `6600000001`..`6600000067`, `Name -> full_name`, `Committee -> department`, `Role -> role`, `Email -> email`, `Join_Date -> joined_date` (ISO `YYYY-MM-DD`), `Department -> major`, `Year` (`Year N -> N`) -> `year`, and `Member_Status -> member_status`.
    - Assigns `gender` (`Female` / `Male`) deterministically from first name.
-   - Keeps `MOCK-66-0001` (Aiden Adams, Academic Affairs Lead) as row 1 so the first seeded SQLite account receives the `admin` role.
+   - Keeps `6600000001` (Aiden Adams, Academic Affairs Lead) as row 1 so the first seeded SQLite account receives the `admin` role.
 
 2. **`sample-sheets/Events.csv`** (20 rows, `AC-001`..`AC-020`)
    - Columns: `event_id,title,date,end_date,location,description,budget_planned,status,image_url`
@@ -47,7 +47,7 @@ We introduce a deterministic, zero-dependency Python 3 standard-library script (
    - Columns: `attendance_id,event_id,member_id,full_name,check_in_time,status,participant_type,project_role,gender,year,major`
    - Consolidates all 20 sheets (`AC-001`..`AC-020`) of `sec/academic_club_members.xlsx`, skipping empty trailing rows and splitting `Department / Year` on `/` for `AC-011`..`AC-020`.
    - Maps `Role` in `{President, Vice President, Secretary, Treasurer, IT Head, Staff}` to `participant_type = Staff` (preserving original role in `project_role`), and `Participant` to `participant_type = Participant`.
-   - Links any attendee whose `Name` matches `Members.csv` to their canonical `MOCK-66-xxxx` `member_id` and `gender`; otherwise preserves `Student_ID` and infers `gender` deterministically from first name.
+   - Links any attendee whose `Name` matches `Members.csv` to their canonical `6600000001`..`6600000067` `member_id` and `gender`; otherwise assigns a deterministic sequential 10-digit student ID starting from `6600000068` cached by raw `Student_ID` across all events and infers `gender` deterministically from first name.
    - Assigns deterministic attendance `status`: ~85% `Present`, ~10% `Late`, ~5% `Absent` on `AC-001`..`AC-016` (with all `Staff` as `Present` or `Late`), and `Present` / `Late` on `AC-017`..`AC-020` so all 20 project detail views render Staff, Participants, and breakdowns. Sets `check_in_time` to `<event_start_date> 09:00` for attended records and empty for `Absent`.
 
 4. **`sample-sheets/Budget.csv`** (126 rows, `TX-001`..`TX-126`)
@@ -57,5 +57,5 @@ We introduce a deterministic, zero-dependency Python 3 standard-library script (
 ## Consequences
 
 - **Positive:** Single repeatable command (`python3 scripts/build-mock-sheets.py`) regenerates all 4 canonical CSVs from the raw Excel workbooks without requiring `openpyxl` or `pandas`.
-- **Positive:** All 20 projects (`AC-001`..`AC-020`), 67 club members (`MOCK-66-0001`..`MOCK-66-0067`), 2,322 attendance records, and 126 financial transactions are preserved with clean types, ISO dates, and active demo alerts.
+- **Positive:** All 20 projects (`AC-001`..`AC-020`), 67 club members (`6600000001`..`6600000067`), 2,322 attendance records (`6600000001`..`6600000732`), and 126 financial transactions are preserved with clean types, ISO dates, and active demo alerts.
 - **Note:** `Budget.csv` includes both `Income` and `Expense` rows (`type` column); downstream aggregators (`lib/dashboard.js`) must filter or distinguish `type === 'Expense'` when summing actual expenditure so `Income` allocations are not double-counted as spending.

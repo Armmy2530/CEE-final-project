@@ -37,7 +37,8 @@ export const POST: RequestHandler = async (event) => {
     return jsonFail(409, 'This ID already exists.');
   }
 
-  const role: UserRole = id.toUpperCase() === 'MOCK-66-0001' ? 'admin' : 'user';
+  const role: UserRole =
+    id === '6600000001' || id.toUpperCase() === 'MOCK-66-0001' ? 'admin' : 'user';
   rt.db.createUser(id, name, role);
   await rt.db.setPassword(id, password);
   const token = rt.db.createSession(id);

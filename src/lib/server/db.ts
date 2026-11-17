@@ -189,7 +189,7 @@ export function openDb(file: string) {
             q.insertIgnore.run(m.member_id, m.full_name, i === 0 ? 'admin' : 'user', now);
           }
         }
-        // Always ensure the primary club admin (members[0], e.g. MOCK-66-0001) has role = 'admin'
+        // Always ensure the primary club admin (members[0], e.g. 6600000001) has role = 'admin'
         // even if someone registered it early via Sign up before seeding ran.
         q.promoteAdmin.run(members[0].member_id);
         if ((q.admins.get() as { n: number }).n === 0) {

@@ -188,6 +188,117 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
   let seeding: Promise<void> | null = null;
   let supabaseSynced = false;
 
+  const LEGACY_MOCK_ID_RE = /^MOCK-66-(\d{4})$/i;
+
+  function mapLegacyMockId(id: string): string | null {
+    const match = LEGACY_MOCK_ID_RE.exec(id.trim());
+    if (!match) return null;
+    const num = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(num) || num < 1 || num > 67) return null;
+    return String(6600000000 + num);
+  }
+
+  async function migrateLegacyMockUsers(syncRemote = false) {
+    const legacyRows = rawDb
+      .listAllUserRows()
+      .map((u) => ({ oldUser: u, newId: mapLegacyMockId(u.member_id) }))
+      .filter((entry): entry is { oldUser: DbUserRow; newId: string } => Boolean(entry.newId));
+
+    const migratedRows: DbUserRow[] = [];
+    const now = Date.now();
+
+    for (const { oldUser, newId } of legacyRows) {
+      const existingNew = rawDb.getUser(newId);
+      const isPrimaryAdmin = newId === '6600000001';
+      const merged: DbUserRow = existingNew
+        ? {
+            member_id: newId,
+            full_name:
+              oldUser.pw_hash || !existingNew.pw_hash
+                ? oldUser.full_name || existingNew.full_name
+                : existingNew.full_name,
+            role:
+              oldUser.role === 'admin' || existingNew.role === 'admin' || isPrimaryAdmin
+                ? 'admin'
+                : 'user',
+            pw_hash: existingNew.pw_hash ?? oldUser.pw_hash,
+            pw_salt: existingNew.pw_hash ? existingNew.pw_salt : oldUser.pw_salt,
+            theme: existingNew.theme ?? oldUser.theme,
+            created_at: Math.min(oldUser.created_at, existingNew.created_at)
+          }
+        : {
+            member_id: newId,
+            full_name: oldUser.full_name,
+            role: isPrimaryAdmin ? 'admin' : oldUser.role,
+            pw_hash: oldUser.pw_hash,
+            pw_salt: oldUser.pw_salt,
+            theme: oldUser.theme,
+            created_at: oldUser.created_at
+          };
+
+      rawDb.upsertUserFromRemote(merged);
+      const savedNew = rawDb.getUser(newId);
+      if (savedNew) migratedRows.push(savedNew);
+    }
+
+    if (syncRemote && isSupaConnected() && migratedRows.length) {
+      await supa.upsertUsers(migratedRows, false);
+    }
+
+    for (const { oldUser, newId } of legacyRows) {
+      rawDb.reassignSessions(oldUser.member_id, newId);
+      if (syncRemote && isSupaConnected()) {
+        await supa.reassignSessions?.(oldUser.member_id, newId);
+      }
+    }
+
+    for (const s of rawDb.listSettings()) {
+      if (s.key.startsWith('google_user_map:')) {
+        const mapped = mapLegacyMockId(s.value);
+        if (mapped) {
+          rawDb.setSetting(s.key, mapped, now);
+          if (syncRemote && isSupaConnected()) {
+            await supa.upsertSetting(s.key, mapped, now);
+          }
+          if (!rawDb.getSetting(`user_google_email:${mapped}`)) {
+            const emailLower = s.key.slice('google_user_map:'.length).trim().toLowerCase();
+            if (emailLower) {
+              rawDb.setSetting(`user_google_email:${mapped}`, emailLower, now);
+              if (syncRemote && isSupaConnected()) {
+                await supa.upsertSetting(`user_google_email:${mapped}`, emailLower, now);
+              }
+            }
+          }
+        }
+      } else if (s.key.startsWith('user_google_email:')) {
+        const oldMemberId = s.key.slice('user_google_email:'.length);
+        const mapped = mapLegacyMockId(oldMemberId);
+        if (mapped) {
+          const emailLower = s.value.trim().toLowerCase();
+          if (emailLower && !rawDb.getSetting(`user_google_email:${mapped}`)) {
+            rawDb.setSetting(`user_google_email:${mapped}`, emailLower, now);
+            rawDb.setSetting(`google_user_map:${emailLower}`, mapped, now);
+            if (syncRemote && isSupaConnected()) {
+              await supa.upsertSetting(`user_google_email:${mapped}`, emailLower, now);
+              await supa.upsertSetting(`google_user_map:${emailLower}`, mapped, now);
+            }
+          }
+          rawDb.deleteSetting(s.key);
+          if (syncRemote && isSupaConnected()) {
+            await supa.deleteSetting?.(s.key);
+          }
+        }
+      }
+    }
+
+    for (const { oldUser } of legacyRows) {
+      rawDb.deleteUser(oldUser.member_id);
+      if (syncRemote && isSupaConnected()) {
+        await supa.deleteUser(oldUser.member_id);
+      }
+    }
+  }
+
   async function syncWithSupabase(primaryAdminId?: string) {
     if (!supa.isEnabled() || supabaseSynced) return;
     const status = await supa.probe();
@@ -241,6 +352,8 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
       }
     }
 
+    await migrateLegacyMockUsers(true);
+
     // Push local seeded users & settings up to Supabase
     const localUsers = rawDb.listAllUserRows();
     if (localUsers.length) {
@@ -251,16 +364,17 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
       }
     }
 
-    const remoteSettingKeys = new Set((remoteSettings || []).map((s) => s.key));
+    const remoteSettingByKey = new Map((remoteSettings || []).map((s) => [s.key, s]));
     for (const ls of rawDb.listSettings()) {
-      if (!remoteSettingKeys.has(ls.key)) {
+      const rs = remoteSettingByKey.get(ls.key);
+      if (!rs || ls.updated_at > rs.updated_at) {
         await supa.upsertSetting(ls.key, ls.value, ls.updated_at);
       }
     }
   }
 
-  async function cleanupLegacyGoogleUsers(primaryAdminId = 'MOCK-66-0001') {
-    const targetAdmin = rawDb.getUser(primaryAdminId) || rawDb.getUser('MOCK-66-0001');
+  async function cleanupLegacyGoogleUsers(primaryAdminId = '6600000001') {
+    const targetAdmin = rawDb.getUser(primaryAdminId) || rawDb.getUser('6600000001');
     if (!targetAdmin) return;
 
     const legacyUsers = rawDb
@@ -314,6 +428,7 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     seeding = (async () => {
       try {
         const r = await sheetSource.getData();
+        await migrateLegacyMockUsers(false);
         database.seedFromMembers(r.data.Members);
         const primaryAdminId = r.data.Members[0]?.member_id;
         await syncWithSupabase(primaryAdminId);
@@ -375,6 +490,7 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
   async function getDashboard(force = false): Promise<DashboardPayload> {
     const r = await sheetSource.getData({ force });
     if (!seeded) {
+      await migrateLegacyMockUsers(false);
       database.seedFromMembers(r.data.Members);
       const primaryAdminId = r.data.Members[0]?.member_id;
       await syncWithSupabase(primaryAdminId);

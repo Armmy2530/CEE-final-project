@@ -102,7 +102,7 @@
     <form id="addUserForm" class="inline-form" novalidate onsubmit={addUser}>
       <div>
         <label for="newId">Member ID</label>
-        <input id="newId" placeholder="e.g. MOCK-66-0068" bind:value={newId} required />
+        <input id="newId" placeholder="e.g. 6600000068" bind:value={newId} required />
       </div>
       <div>
         <label for="newName">Full name</label>
