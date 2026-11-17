@@ -1,7 +1,215 @@
 import { addDayStr, pad2, projectDaysOf } from './format';
 import type { ProjectSummary } from './types';
 
-export type CalViewMode = 'month' | 'week';
+export type CalViewMode = 'month' | 'week' | 'day';
+
+export interface EventPaletteColor {
+  index: number;
+  cssClass: string;
+  name: string;
+  hex: string;
+  bgLight: string;
+  textLight: string;
+  borderLight: string;
+  bgDark: string;
+  textDark: string;
+  borderDark: string;
+}
+
+export const EVENT_PALETTE: readonly EventPaletteColor[] = [
+  {
+    index: 0,
+    cssClass: 'ev-palette-0',
+    name: 'Terracotta',
+    hex: '#c95d3a',
+    bgLight: '#fbeae4',
+    textLight: '#7c2f17',
+    borderLight: '#c95d3a',
+    bgDark: '#4c281e',
+    textDark: '#f8c3b0',
+    borderDark: '#e07b59'
+  },
+  {
+    index: 1,
+    cssClass: 'ev-palette-1',
+    name: 'Sage',
+    hex: '#3d7a5a',
+    bgLight: '#e6f3ec',
+    textLight: '#1f4b34',
+    borderLight: '#3d7a5a',
+    bgDark: '#1f3d2d',
+    textDark: '#a7dec0',
+    borderDark: '#59a67d'
+  },
+  {
+    index: 2,
+    cssClass: 'ev-palette-2',
+    name: 'Ocean',
+    hex: '#2e6f95',
+    bgLight: '#e5f1f8',
+    textLight: '#17445e',
+    borderLight: '#2e6f95',
+    bgDark: '#1b3547',
+    textDark: '#a6d4ee',
+    borderDark: '#4f99c4'
+  },
+  {
+    index: 3,
+    cssClass: 'ev-palette-3',
+    name: 'Plum',
+    hex: '#7a4d8b',
+    bgLight: '#f2eaf6',
+    textLight: '#492756',
+    borderLight: '#7a4d8b',
+    bgDark: '#382442',
+    textDark: '#dab7e8',
+    borderDark: '#a773bc'
+  },
+  {
+    index: 4,
+    cssClass: 'ev-palette-4',
+    name: 'Amber',
+    hex: '#b87324',
+    bgLight: '#fbf0e1',
+    textLight: '#6b3e0d',
+    borderLight: '#b87324',
+    bgDark: '#452e16',
+    textDark: '#f4ca92',
+    borderDark: '#dc9441'
+  },
+  {
+    index: 5,
+    cssClass: 'ev-palette-5',
+    name: 'Teal',
+    hex: '#2a7b76',
+    bgLight: '#e4f4f3',
+    textLight: '#144c49',
+    borderLight: '#2a7b76',
+    bgDark: '#193b39',
+    textDark: '#9fe0db',
+    borderDark: '#4baea8'
+  },
+  {
+    index: 6,
+    cssClass: 'ev-palette-6',
+    name: 'Rose',
+    hex: '#b54865',
+    bgLight: '#fae9ee',
+    textLight: '#6e1e34',
+    borderLight: '#b54865',
+    bgDark: '#46212c',
+    textDark: '#f4b2c4',
+    borderDark: '#d86d8a'
+  },
+  {
+    index: 7,
+    cssClass: 'ev-palette-7',
+    name: 'Indigo',
+    hex: '#4a5899',
+    bgLight: '#eaedf8',
+    textLight: '#273163',
+    borderLight: '#4a5899',
+    bgDark: '#252c4b',
+    textDark: '#b8c3f2',
+    borderDark: '#7082d4'
+  }
+] as const;
+
+export interface SvarCalendarEvent {
+  id: string;
+  text: string;
+  title: string;
+  start: Date;
+  end: Date;
+  allDay: true;
+  colorIndex: number;
+  color: string;
+  css: string;
+  raw: ProjectSummary;
+  event_id: string;
+  status: ProjectSummary['status'];
+  days: number;
+  start_date: string;
+  end_date: string;
+  budget_planned: number;
+  budget_actual: number;
+  attendee_count: number;
+  location: string;
+  category: ProjectSummary['category'];
+  note: string;
+}
+
+export function getEventColorIndex(eventId: string): number {
+  const match = String(eventId || '').match(/(\d+)$/);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    if (Number.isFinite(num) && num > 0) {
+      return (num - 1) % EVENT_PALETTE.length;
+    }
+  }
+  let hash = 0;
+  const str = String(eventId || '');
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return hash % EVENT_PALETTE.length;
+}
+
+export function parseLocalDate(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y || 2026, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+}
+
+export function formatLocalIso(dt: Date): string {
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+}
+
+export function shiftDayStr(dateStr: string, deltaDays: number): string {
+  return addDayStr(dateStr, deltaDays);
+}
+
+export function getDayTitle(dateStr: string): string {
+  if (!dateStr) return '';
+  const dt = parseIsoUtc(dateStr);
+  return `${DOW_LABELS[dt.getUTCDay()]}, ${dt.getUTCDate()} ${MONTHS_SHORT[dt.getUTCMonth()]} ${dt.getUTCFullYear()}`;
+}
+
+export function toSvarEvents(events: ProjectSummary[]): SvarCalendarEvent[] {
+  return events
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date) || a.event_id.localeCompare(b.event_id))
+    .map((ev) => {
+      const startIso = ev.date;
+      const endIso = ev.end_date && ev.end_date >= startIso ? ev.end_date : startIso;
+      const exclusiveEndIso = addDayStr(endIso, 1);
+      const colorIndex = getEventColorIndex(ev.event_id);
+      const palette = EVENT_PALETTE[colorIndex];
+      const statusSlug = ev.status.toLowerCase();
+      return {
+        id: ev.event_id,
+        text: ev.title,
+        title: ev.title,
+        start: parseLocalDate(startIso),
+        end: parseLocalDate(exclusiveEndIso),
+        allDay: true,
+        colorIndex,
+        color: palette.hex,
+        css: `${palette.cssClass} st-${statusSlug}${ev.days > 1 ? ' ev-multiday' : ''}`,
+        raw: ev,
+        event_id: ev.event_id,
+        status: ev.status,
+        days: ev.days,
+        start_date: startIso,
+        end_date: endIso,
+        budget_planned: ev.budget_planned,
+        budget_actual: ev.actual,
+        attendee_count: ev.attendees,
+        location: ev.location,
+        category: ev.category,
+        note: ev.description
+      };
+    });
+}
 
 export const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 

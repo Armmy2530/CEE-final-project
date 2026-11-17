@@ -453,6 +453,7 @@
         <Calendar
           events={dash?.events ?? []}
           today={dash?.today ?? ''}
+          theme={themeCtx.value}
           onOpenProject={openProject}
         />
       {:else if activePage === 'members'}
