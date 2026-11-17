@@ -16,16 +16,22 @@ import { normalizeMemberId, openDb } from '../src/lib/server/db';
 import { createRuntime, setRuntimeForTesting } from '../src/lib/server/runtime';
 import { rank } from '../src/lib/search';
 import {
+  EVENT_PALETTE,
   buildByDateMap,
   buildMonthGrid,
   buildWeekDays,
   buildWeekSpans,
+  formatLocalIso,
+  getDayTitle,
+  getEventColorIndex,
   getMonthTitle,
   getWeekRange,
   getWeekStart,
   getWeekTitle,
+  shiftDayStr,
   shiftMonthStr,
-  shiftWeekStr
+  shiftWeekStr,
+  toSvarEvents
 } from '../src/lib/calendar';
 
 import { handle } from '../src/hooks.server';
@@ -929,6 +935,61 @@ describe('Calendar week and month helpers', () => {
     expect(augCells).toHaveLength(42);
     expect(augCells[0].key).toBe('2026-07-26');
     expect(augCells[0].other).toBe(true);
+  });
+
+  test('EVENT_PALETTE, getEventColorIndex, and day helpers generate consistent colors and labels', () => {
+    expect(EVENT_PALETTE).toHaveLength(8);
+    expect(EVENT_PALETTE[0].cssClass).toBe('ev-palette-0');
+    expect(EVENT_PALETTE[7].cssClass).toBe('ev-palette-7');
+
+    // Numeric suffix mapping cycles cleanly 0..7
+    expect(getEventColorIndex('AC-001')).toBe(0);
+    expect(getEventColorIndex('AC-002')).toBe(1);
+    expect(getEventColorIndex('AC-008')).toBe(7);
+    expect(getEventColorIndex('AC-009')).toBe(0);
+    expect(getEventColorIndex('AC-016')).toBe(7);
+
+    // Non-numeric IDs use deterministic hash fallback
+    const customIdx = getEventColorIndex('CUSTOM-EVENT');
+    expect(customIdx).toBeGreaterThanOrEqual(0);
+    expect(customIdx).toBeLessThan(8);
+    expect(getEventColorIndex('CUSTOM-EVENT')).toBe(customIdx);
+
+    // Day shifting & formatting
+    expect(shiftDayStr('2026-11-30', 1)).toBe('2026-12-01');
+    expect(shiftDayStr('2026-01-01', -1)).toBe('2025-12-31');
+    expect(getDayTitle('2026-11-16')).toBe('Mon, 16 Nov 2026');
+  });
+
+  test('toSvarEvents maps multi-day and single-day events with exclusive end dates, allDay spans, and palette CSS', () => {
+    const svarEvents = toSvarEvents(dash.events);
+    expect(svarEvents).toHaveLength(20);
+
+    // Multi-day event AC-016: 2026-11-18..2026-11-20 (3 days) -> exclusive end 2026-11-21
+    const ac16 = svarEvents.find((e) => e.id === 'AC-016')!;
+    expect(ac16).toBeDefined();
+    expect(ac16.allDay).toBe(true);
+    expect(formatLocalIso(ac16.start)).toBe('2026-11-18');
+    expect(formatLocalIso(ac16.end)).toBe('2026-11-21');
+    expect(ac16.colorIndex).toBe(7);
+    expect(ac16.color).toBe(EVENT_PALETTE[7].hex);
+    expect(ac16.css).toContain('ev-palette-7');
+    expect(ac16.css).toContain('ev-multiday');
+    expect(ac16.days).toBe(3);
+    expect(ac16.raw.event_id).toBe('AC-016');
+
+    // Single-day event AC-020: 2027-01-30..2027-01-30 (1 day) -> exclusive end 2027-01-31
+    const ac20 = svarEvents.find((e) => e.id === 'AC-020')!;
+    expect(ac20).toBeDefined();
+    expect(ac20.allDay).toBe(true);
+    expect(formatLocalIso(ac20.start)).toBe('2027-01-30');
+    expect(formatLocalIso(ac20.end)).toBe('2027-01-31');
+    expect(ac20.colorIndex).toBe(3);
+    expect(ac20.css).toContain('ev-palette-3');
+    expect(ac20.css).not.toContain('ev-multiday');
+    expect(ac20.days).toBe(1);
+    expect(ac20.budget_planned).toBe(ac20.raw.budget_planned);
+    expect(ac20.attendee_count).toBe(ac20.raw.attendees);
   });
 });
 

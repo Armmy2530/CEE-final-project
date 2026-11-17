@@ -23,6 +23,7 @@
     "vite": "^7.3.8"
   },
   "dependencies": {
-    "@humanspeak/svelte-markdown": "^2.3.0"
+    "@humanspeak/svelte-markdown": "^2.3.0",
+    "@svar-ui/svelte-calendar": "^2.7.1"
   }
 }

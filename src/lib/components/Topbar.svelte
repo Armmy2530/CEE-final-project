@@ -63,13 +63,23 @@
   } = $props();
 
   let userMenuOpen = $state(false);
+  let topUserMenuOpen = $state(false);
+  let mobileNavOpen = $state(false);
   const ICON: Record<AlertItem['severity'], string> = { critical: '!', warning: '!', info: 'i' };
   const breadcrumbTitle = $derived(PAGE_TITLES[activePage] || 'Summary');
+
+  function navigate(page: PageId) {
+    mobileNavOpen = false;
+    userMenuOpen = false;
+    topUserMenuOpen = false;
+    onSelectPage(page);
+  }
 
   function toggleNotif(e: MouseEvent) {
     e.stopPropagation();
     const next = !notifOpen;
     userMenuOpen = false;
+    topUserMenuOpen = false;
     notifOpen = next;
     if (next) onMarkSeen();
   }
@@ -78,7 +88,16 @@
     e.stopPropagation();
     const next = !userMenuOpen;
     notifOpen = false;
+    topUserMenuOpen = false;
     userMenuOpen = next;
+  }
+
+  function toggleTopUserMenu(e: MouseEvent) {
+    e.stopPropagation();
+    const next = !topUserMenuOpen;
+    notifOpen = false;
+    userMenuOpen = false;
+    topUserMenuOpen = next;
   }
 
   function handleWindowClick(e: MouseEvent) {
@@ -86,6 +105,7 @@
     if (!target?.closest('.menu-wrap') && !target?.closest('.profile-wrap')) {
       notifOpen = false;
       userMenuOpen = false;
+      topUserMenuOpen = false;
     }
   }
 
@@ -93,29 +113,50 @@
     if (e.key === 'Escape') {
       notifOpen = false;
       userMenuOpen = false;
+      topUserMenuOpen = false;
+      mobileNavOpen = false;
     }
   }
 </script>
 
 <svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
-<aside class="sidebar">
+{#if mobileNavOpen}
   <button
     type="button"
-    class="brand"
-    aria-label="Clubhouse home"
-    onclick={() => onSelectPage('summary')}
-  >
-    <span class="brand-mark">
-      <svg viewBox="0 0 40 40" aria-hidden="true">
-        <path d="M4 14.2 20 7l16 7.2-16 7.1L4 14.2Z" />
-        <path d="M10 18v7.4c5.9 4.3 14.1 4.3 20 0V18l-10 4.5L10 18Z" />
-        <path d="M35.8 15v9.2" />
-        <circle cx="35.8" cy="27" r="1.7" />
-      </svg>
-    </span>
-    <span class="brand-word">clubhouse<span>.</span></span>
-  </button>
+    class="sidebar-backdrop"
+    aria-label="Close navigation menu"
+    onclick={() => (mobileNavOpen = false)}
+  ></button>
+{/if}
+
+<aside id="appSidebar" class="sidebar" class:mobile-open={mobileNavOpen}>
+  <div class="sidebar-brand-row">
+    <button
+      type="button"
+      class="brand"
+      aria-label="Clubhouse home"
+      onclick={() => navigate('summary')}
+    >
+      <span class="brand-mark">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <path d="M4 14.2 20 7l16 7.2-16 7.1L4 14.2Z" />
+          <path d="M10 18v7.4c5.9 4.3 14.1 4.3 20 0V18l-10 4.5L10 18Z" />
+          <path d="M35.8 15v9.2" />
+          <circle cx="35.8" cy="27" r="1.7" />
+        </svg>
+      </span>
+      <span class="brand-word">clubhouse<span>.</span></span>
+    </button>
+    <button
+      type="button"
+      class="icon-button sidebar-close-btn"
+      aria-label="Close navigation menu"
+      onclick={() => (mobileNavOpen = false)}
+    >
+      &times;
+    </button>
+  </div>
 
   <div class="workspace-switch">
     <span class="workspace-icon">A</span>
@@ -132,7 +173,7 @@
       type="button"
       class="nav-item"
       class:active={activePage === 'summary'}
-      onclick={() => onSelectPage('summary')}
+      onclick={() => navigate('summary')}
     >
       <span class="nav-icon" aria-hidden="true">&#9638;</span>
       Summary
@@ -141,7 +182,7 @@
       type="button"
       class="nav-item"
       class:active={activePage === 'projects'}
-      onclick={() => onSelectPage('projects')}
+      onclick={() => navigate('projects')}
     >
       <span class="nav-icon" aria-hidden="true">&#9636;</span>
       Project data
@@ -151,7 +192,7 @@
       type="button"
       class="nav-item"
       class:active={activePage === 'calendar'}
-      onclick={() => onSelectPage('calendar')}
+      onclick={() => navigate('calendar')}
     >
       <span class="nav-icon" aria-hidden="true">&#9635;</span>
       Events calendar
@@ -160,7 +201,7 @@
       type="button"
       class="nav-item"
       class:active={activePage === 'members'}
-      onclick={() => onSelectPage('members')}
+      onclick={() => navigate('members')}
     >
       <span class="nav-icon" aria-hidden="true">&#9817;</span>
       Members
@@ -174,7 +215,7 @@
       type="button"
       class="nav-item"
       class:active={activePage === 'budget'}
-      onclick={() => onSelectPage('budget')}
+      onclick={() => navigate('budget')}
     >
       <span class="nav-icon" aria-hidden="true">&#9707;</span>
       Budget
@@ -185,7 +226,7 @@
         id="usersTab"
         class="nav-item"
         class:active={activePage === 'users'}
-        onclick={() => onSelectPage('users')}
+        onclick={() => navigate('users')}
       >
         <span class="nav-icon" aria-hidden="true">&#9639;</span>
         Users
@@ -209,7 +250,10 @@
           id="openSheetPickerBtn"
           aria-label="Configure Google Sheet or data source"
           title="Configure Google Sheet or data source"
-          onclick={() => onOpenSheetPicker?.()}
+          onclick={() => {
+            mobileNavOpen = false;
+            onOpenSheetPicker?.();
+          }}
         >
           &middot;&middot;&middot;
         </button>
@@ -236,7 +280,7 @@
         onclick={toggleUserMenu}
       >
         <span class="avatar" id="userInitials">{initials(user.full_name)}</span>
-        <span>
+        <span class="profile-text">
           <b id="userName">{user.full_name}</b>
           <small id="userRole">{user.role === 'admin' ? 'Admin' : 'Normal user'}</small>
         </span>
@@ -256,6 +300,7 @@
               type="button"
               onclick={() => {
                 userMenuOpen = false;
+                mobileNavOpen = false;
                 onUnlinkGoogle?.();
               }}
             >
@@ -268,6 +313,7 @@
               type="button"
               onclick={() => {
                 userMenuOpen = false;
+                mobileNavOpen = false;
                 onLinkGoogle?.();
               }}
             >
@@ -280,6 +326,7 @@
             type="button"
             onclick={() => {
               userMenuOpen = false;
+              mobileNavOpen = false;
               onLogout();
             }}
           >
@@ -293,10 +340,23 @@
 
 <div class="main-area">
   <header class="topbar">
-    <div class="breadcrumbs">
-      <span>Workspace</span>
-      <span class="crumb-slash">/</span>
-      <b id="breadcrumb-current">{breadcrumbTitle}</b>
+    <div class="topbar-left">
+      <button
+        type="button"
+        id="mobileMenuBtn"
+        class="icon-button mobile-menu-btn"
+        aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        aria-expanded={mobileNavOpen}
+        aria-controls="appSidebar"
+        onclick={() => (mobileNavOpen = !mobileNavOpen)}
+      >
+        <span aria-hidden="true">&#9776;</span>
+      </button>
+      <div class="breadcrumbs">
+        <span class="crumb-workspace">Workspace</span>
+        <span class="crumb-slash">/</span>
+        <b id="breadcrumb-current">{breadcrumbTitle}</b>
+      </div>
     </div>
 
     <div class="top-actions">
@@ -374,18 +434,125 @@
         {/if}
       </div>
 
-      <button
-        type="button"
-        class="avatar top-avatar"
-        aria-label="Toggle user menu"
-        onclick={toggleUserMenu}
-      >
-        {initials(user.full_name)}
-      </button>
+      <div class="menu-wrap">
+        <button
+          type="button"
+          class="avatar top-avatar"
+          aria-label="Toggle user menu"
+          aria-haspopup="true"
+          aria-expanded={topUserMenuOpen}
+          onclick={toggleTopUserMenu}
+        >
+          {initials(user.full_name)}
+        </button>
+
+        {#if topUserMenuOpen}
+          <div class="popover user-menu top-user-menu">
+            <div class="user-menu-id">
+              <strong>{user.full_name}</strong> &middot; {user.member_id}
+            </div>
+            {#if user.linkedGoogleEmail}
+              <div class="user-menu-google">
+                Google linked: <strong>{user.linkedGoogleEmail}</strong>
+              </div>
+              <button
+                class="menu-item"
+                type="button"
+                onclick={() => {
+                  topUserMenuOpen = false;
+                  onUnlinkGoogle?.();
+                }}
+              >
+                Unlink Google
+              </button>
+            {:else}
+              <button
+                class="menu-item"
+                type="button"
+                onclick={() => {
+                  topUserMenuOpen = false;
+                  onLinkGoogle?.();
+                }}
+              >
+                Link Google account
+              </button>
+            {/if}
+            <button
+              class="menu-item"
+              type="button"
+              onclick={() => {
+                topUserMenuOpen = false;
+                onLogout();
+              }}
+            >
+              Log out
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </header>
 
   <main class="content-wrap">
     {@render children?.()}
   </main>
+
+  <nav class="mobile-bottom-nav" class:has-users={user.role === 'admin'} aria-label="Quick navigation">
+    <button
+      type="button"
+      class="mobile-nav-item"
+      class:active={activePage === 'summary'}
+      onclick={() => navigate('summary')}
+    >
+      <span class="mobile-nav-icon" aria-hidden="true">&#9638;</span>
+      <span>Summary</span>
+    </button>
+    <button
+      type="button"
+      class="mobile-nav-item"
+      class:active={activePage === 'projects'}
+      onclick={() => navigate('projects')}
+    >
+      <span class="mobile-nav-icon" aria-hidden="true">&#9636;</span>
+      <span>Projects</span>
+    </button>
+    <button
+      type="button"
+      class="mobile-nav-item"
+      class:active={activePage === 'calendar'}
+      onclick={() => navigate('calendar')}
+    >
+      <span class="mobile-nav-icon" aria-hidden="true">&#9635;</span>
+      <span>Calendar</span>
+    </button>
+    <button
+      type="button"
+      class="mobile-nav-item"
+      class:active={activePage === 'members'}
+      onclick={() => navigate('members')}
+    >
+      <span class="mobile-nav-icon" aria-hidden="true">&#9817;</span>
+      <span>Members</span>
+    </button>
+    <button
+      type="button"
+      class="mobile-nav-item"
+      class:active={activePage === 'budget'}
+      onclick={() => navigate('budget')}
+    >
+      <span class="mobile-nav-icon" aria-hidden="true">&#9707;</span>
+      <span>Budget</span>
+    </button>
+    {#if user.role === 'admin'}
+      <button
+        type="button"
+        class="mobile-nav-item"
+        class:active={activePage === 'users'}
+        onclick={() => navigate('users')}
+      >
+        <span class="mobile-nav-icon" aria-hidden="true">&#9639;</span>
+        <span>Users</span>
+      </button>
+    {/if}
+  </nav>
 </div>

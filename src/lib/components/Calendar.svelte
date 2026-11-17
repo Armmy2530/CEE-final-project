@@ -1,81 +1,116 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
+  import {
+    Calendar as SvarCalendar,
+    Willow,
+    WillowDark,
+    type CalendarInstanceApi,
+    type CellContext,
+    type EventContext
+  } from '@svar-ui/svelte-calendar';
   import {
     buildByDateMap,
-    buildMonthGrid,
-    buildWeekDays,
-    buildWeekSpans,
-    DOW_LABELS,
+    EVENT_PALETTE,
+    formatLocalIso,
+    getDayTitle,
+    getEventColorIndex,
     getMonthTitle,
     getWeekRange,
     getWeekStart,
     getWeekTitle,
+    parseLocalDate,
+    shiftDayStr,
     shiftMonthStr,
     shiftWeekStr,
+    toSvarEvents,
     type CalViewMode
   } from '$lib/calendar';
-  import { addDayStr, baht, fmtDate } from '$lib/format';
-  import type { ProjectSummary } from '$lib/types';
+  import { baht, fmtDate, fmtRange, pct } from '$lib/format';
+  import type { ProjectSummary, ThemeMode } from '$lib/types';
+  import CalendarTooltip from './CalendarTooltip.svelte';
+
+  type CalFilterMode = 'all' | 'multiday' | 'Scheduled' | 'Completed' | 'Cancelled';
+
+  const SVAR_VIEWS = ['month', 'week', 'day'];
 
   let {
-    events,
-    today,
+    events = [],
+    today = '',
+    compact = false,
     standalone = true,
-    onOpenProject
+    theme = 'light',
+    onOpenProject,
+    onSelectProject
   }: {
     events: ProjectSummary[];
-    today: string;
+    today?: string;
+    compact?: boolean;
     standalone?: boolean;
+    theme?: ThemeMode;
     onOpenProject?: (eventId: string) => void;
+    onSelectProject?: (eventId: string) => void;
   } = $props();
 
   let viewMode = $state<CalViewMode>('month');
-  let calMonth = $state('');
-  let weekStart = $state('');
+  let filterMode = $state<CalFilterMode>('all');
+  let anchorDate = $state('');
   let calSelected = $state<string | null>(null);
-  let weekFilter = $state<'all' | 'with-events'>('all');
+  let selectedEventId = $state<string | null>(null);
+  let svarApi = $state<CalendarInstanceApi | null>(null);
+
+  const openProjectCb = $derived(onOpenProject ?? onSelectProject);
+
+  const fallbackToday = $derived.by(() => {
+    if (today) return today;
+    if (events.length) return events[0].date;
+    return '2026-11-16';
+  });
 
   $effect(() => {
-    if (today) {
-      if (!calMonth) calMonth = today.slice(0, 7);
-      if (!weekStart) weekStart = getWeekStart(today);
-      if (calSelected === null) calSelected = today;
+    if (!anchorDate && fallbackToday) {
+      anchorDate = fallbackToday;
+    }
+    if (calSelected === null && fallbackToday) {
+      calSelected = fallbackToday;
     }
   });
 
-  const byDate = $derived.by(() => buildByDateMap(events));
+  const multiDayCount = $derived(events.filter((e) => e.days > 1).length);
+  const scheduledCount = $derived(events.filter((e) => e.status === 'Scheduled').length);
+  const completedCount = $derived(events.filter((e) => e.status === 'Completed').length);
+  const cancelledCount = $derived(events.filter((e) => e.status === 'Cancelled').length);
+
+  const filteredEvents = $derived.by(() => {
+    if (filterMode === 'all') return events;
+    if (filterMode === 'multiday') return events.filter((e) => e.days > 1);
+    return events.filter((e) => e.status === filterMode);
+  });
+
+  const sortedEvents = $derived.by(() =>
+    filteredEvents
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date) || a.event_id.localeCompare(b.event_id))
+  );
+
+  const byDate = $derived.by(() => buildByDateMap(filteredEvents));
+  const allByDate = $derived.by(() => buildByDateMap(events));
+
+  const svarEvents = $derived.by(() => toSvarEvents(filteredEvents));
+  const svarDate = $derived.by(() => parseLocalDate(anchorDate || fallbackToday));
+  const activeMonth = $derived((anchorDate || fallbackToday).slice(0, 7));
 
   const calTitle = $derived.by(() => {
-    if (viewMode === 'month') return getMonthTitle(calMonth);
-    return getWeekTitle(weekStart);
-  });
-
-  const calCells = $derived.by(() => {
-    if (!calMonth || !today) return [];
-    return buildMonthGrid(calMonth, today, calSelected, byDate);
-  });
-
-  const weekDays = $derived.by(() => {
-    if (!weekStart || !today) return [];
-    return buildWeekDays(weekStart, today, calSelected, byDate);
-  });
-
-  const weekSpans = $derived.by(() => {
-    if (!weekStart) return [];
-    return buildWeekSpans(weekStart, events);
-  });
-
-  const visibleWeekDays = $derived.by(() => {
-    if (weekFilter === 'with-events') {
-      return weekDays.filter((d) => d.evs.length > 0);
-    }
-    return weekDays;
+    const ref = anchorDate || fallbackToday;
+    if (viewMode === 'month') return getMonthTitle(ref.slice(0, 7));
+    if (viewMode === 'week') return getWeekTitle(getWeekStart(ref));
+    return getDayTitle(ref);
   });
 
   const periodEventsCount = $derived.by(() => {
     const ids = new Set<string>();
+    const ref = anchorDate || fallbackToday;
     if (viewMode === 'month') {
-      if (!calMonth) return 0;
-      const monthPrefix = `${calMonth}-`;
+      const monthPrefix = `${ref.slice(0, 7)}-`;
       for (const [day, list] of Object.entries(byDate)) {
         if (day.startsWith(monthPrefix)) {
           for (const ev of list) ids.add(ev.event_id);
@@ -83,26 +118,29 @@
       }
       return ids.size;
     }
-    if (!weekStart) return 0;
-    const { start, end } = getWeekRange(weekStart);
-    for (const [day, list] of Object.entries(byDate)) {
-      if (day >= start && day <= end) {
-        for (const ev of list) ids.add(ev.event_id);
+    if (viewMode === 'week') {
+      const { start, end } = getWeekRange(getWeekStart(ref));
+      for (const [day, list] of Object.entries(byDate)) {
+        if (day >= start && day <= end) {
+          for (const ev of list) ids.add(ev.event_id);
+        }
       }
+      return ids.size;
     }
+    for (const ev of byDate[ref] || []) ids.add(ev.event_id);
     return ids.size;
   });
 
   const eventMonths = $derived.by(() => {
     const counts = new Map<string, Set<string>>();
-    for (const [day, list] of Object.entries(byDate)) {
+    for (const [day, list] of Object.entries(allByDate)) {
       const m = day.slice(0, 7);
       if (!counts.has(m)) counts.set(m, new Set());
       const set = counts.get(m)!;
       for (const ev of list) set.add(ev.event_id);
     }
-    if (calMonth && !counts.has(calMonth)) {
-      counts.set(calMonth, new Set());
+    if (activeMonth && !counts.has(activeMonth)) {
+      counts.set(activeMonth, new Set());
     }
     return Array.from(counts.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -113,71 +151,195 @@
       }));
   });
 
+  const selectedDayEvents = $derived.by(() => {
+    if (!calSelected) return [];
+    return byDate[calSelected] || [];
+  });
+
+  const selectedEvent = $derived.by(() => {
+    if (selectedEventId) {
+      const found = events.find((e) => e.event_id === selectedEventId);
+      if (found) return found;
+    }
+    return selectedDayEvents[0] ?? null;
+  });
+
+  function selectDay(iso: string, preferredEventId?: string | null) {
+    calSelected = iso;
+    const dayList = byDate[iso] || [];
+    if (preferredEventId) {
+      selectedEventId = preferredEventId;
+    } else if (!dayList.some((e) => e.event_id === selectedEventId)) {
+      selectedEventId = dayList[0]?.event_id ?? null;
+    }
+  }
+
   function switchView(next: CalViewMode) {
     if (next === viewMode) return;
-    if (next === 'week') {
-      const anchor =
-        calSelected && (!calMonth || calSelected.startsWith(calMonth))
-          ? calSelected
-          : today && calMonth && today.startsWith(calMonth)
-            ? today
-            : calMonth
-              ? `${calMonth}-01`
-              : today;
-      if (anchor) weekStart = getWeekStart(anchor);
-    } else if (weekStart) {
-      const weekEnd = addDayStr(weekStart, 6);
-      const anchor =
-        calSelected && calSelected >= weekStart && calSelected <= weekEnd
-          ? calSelected
-          : addDayStr(weekStart, 3);
-      calMonth = anchor.slice(0, 7);
+    if (calSelected && viewMode === 'month' && next !== 'month') {
+      if (calSelected.startsWith(activeMonth)) {
+        anchorDate = calSelected;
+      }
     }
     viewMode = next;
+    if (svarApi) {
+      svarApi.exec('navigate-to', { view: next, date: parseLocalDate(anchorDate || fallbackToday) });
+    }
   }
 
   function shiftPeriod(delta: number) {
+    const ref = anchorDate || fallbackToday;
     if (viewMode === 'month') {
-      if (!calMonth) return;
-      calMonth = shiftMonthStr(calMonth, delta);
+      const nextMonth = shiftMonthStr(ref.slice(0, 7), delta);
+      anchorDate = `${nextMonth}-01`;
+    } else if (viewMode === 'week') {
+      anchorDate = shiftWeekStr(getWeekStart(ref), delta);
     } else {
-      if (!weekStart) return;
-      weekStart = shiftWeekStr(weekStart, delta);
+      anchorDate = shiftDayStr(ref, delta);
+      selectDay(anchorDate);
     }
   }
 
   function jumpToMonth(monthStr: string) {
     if (!monthStr) return;
-    calMonth = monthStr;
-    if (viewMode === 'week') {
-      weekStart = getWeekStart(`${monthStr}-01`);
-    }
     const firstWithEvent = Object.keys(byDate)
       .filter((d) => d.startsWith(`${monthStr}-`))
       .sort()[0];
-    if (firstWithEvent) calSelected = firstWithEvent;
+    anchorDate = firstWithEvent || `${monthStr}-01`;
+    selectDay(anchorDate);
+  }
+
+  function jumpToEvent(eventId: string) {
+    if (!eventId) return;
+    const ev = events.find((e) => e.event_id === eventId);
+    if (!ev) return;
+    anchorDate = ev.date;
+    selectDay(ev.date, ev.event_id);
   }
 
   function jumpToday() {
-    if (!today) return;
-    calMonth = today.slice(0, 7);
-    weekStart = getWeekStart(today);
-    calSelected = today;
+    const ref = fallbackToday;
+    anchorDate = ref;
+    selectDay(ref);
   }
 
-  function handleOpenEvent(eventId: string, dayKey?: string) {
+  function setFilter(next: CalFilterMode) {
+    filterMode = next;
+    if (selectedEventId) {
+      const stillVisible =
+        next === 'all' ||
+        (next === 'multiday'
+          ? (events.find((e) => e.event_id === selectedEventId)?.days ?? 0) > 1
+          : events.find((e) => e.event_id === selectedEventId)?.status === next);
+      if (!stillVisible) {
+        selectedEventId = null;
+      }
+    }
+  }
+
+  function computeCellCss(ctx: CellContext): string {
+    if (!ctx.date) return '';
+    const iso = formatLocalIso(ctx.date);
+    const classes = [`club-cell-${iso}`];
+    if (iso === calSelected) classes.push('club-cell-selected');
+    if (fallbackToday && iso === fallbackToday) classes.push('club-cell-today');
+    return classes.join(' ');
+  }
+
+  function computeEventCss(ctx: EventContext): string {
+    return String(ctx.event.id) === selectedEventId ? 'ev-selected' : '';
+  }
+
+  function initSvarApi(api: CalendarInstanceApi) {
+    svarApi = api;
+
+    api.intercept('select-event', (ev) => {
+      if (ev && 'id' in ev && ev.id != null) {
+        const id = String(ev.id);
+        const found = events.find((item) => item.event_id === id);
+        if (found) {
+          const endIso = found.end_date || found.date;
+          const nextDay =
+            calSelected && calSelected >= found.date && calSelected <= endIso
+              ? calSelected
+              : found.date;
+          selectDay(nextDay, found.event_id);
+        }
+      }
+      return false;
+    });
+
+    api.intercept('navigate-to', (ev) => {
+      if (
+        ev &&
+        'date' in ev &&
+        ev.date instanceof Date &&
+        'view' in ev &&
+        ev.view === 'day' &&
+        viewMode !== 'day'
+      ) {
+        const iso = formatLocalIso(ev.date);
+        selectDay(iso);
+        return false;
+      }
+    });
+
+    api.intercept('add-event', () => false);
+    api.intercept('update-event', () => false);
+    api.intercept('move-event', () => false);
+    api.intercept('delete-event', () => false);
+  }
+
+  function handleSvarWrapperClick(e: MouseEvent) {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    if (
+      target.closest('.wx-bar-event') ||
+      target.closest('.wx-box-event') ||
+      target.closest('.wx-list-event') ||
+      target.closest('.wx-more-button')
+    ) {
+      return;
+    }
+
+    const dayNumEl = target.closest('[data-date]') as HTMLElement | null;
+    if (dayNumEl) {
+      const iso = dayNumEl.getAttribute('data-date');
+      if (iso) {
+        selectDay(iso);
+        return;
+      }
+    }
+
+    let cellEl = target.closest('.wx-grid-cell') as HTMLElement | null;
+    if (!cellEl && typeof document !== 'undefined' && document.elementsFromPoint) {
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      cellEl = (els.find((el) => el.classList?.contains('wx-grid-cell')) as HTMLElement) || null;
+    }
+    if (cellEl) {
+      const match = cellEl.className.match(/club-cell-(\d{4}-\d{2}-\d{2})/);
+      if (match) {
+        selectDay(match[1]);
+      }
+    }
+  }
+
+  function handleInspectProject(eventId: string, dayKey?: string) {
     if (dayKey) calSelected = dayKey;
-    onOpenProject?.(eventId);
+    selectedEventId = eventId;
+    openProjectCb?.(eventId);
   }
 </script>
 
-<section id="calendar" class="page-content">
-  {#if standalone}
+<section id="calendar" class="page-content" class:cal-compact={compact}>
+  {#if standalone && !compact}
     <div class="page-heading">
       <div>
         <p class="eyebrow">WORKSPACE <span class="heading-dot">&middot;</span> CALENDAR</p>
         <h1>Events calendar</h1>
-        <p class="subheading">Keep track of everything happening this semester.</p>
+        <p class="subheading">
+          Multi-day spans and single-day events rendered with consistent event colors.
+        </p>
       </div>
     </div>
   {/if}
@@ -191,34 +353,96 @@
             {periodEventsCount} {periodEventsCount === 1 ? 'event' : 'events'} in {calTitle || 'view'}
           </span>
         </div>
-        <div class="cal-legend" aria-label="Event status legend">
-          <span class="cal-legend-pill scheduled"><i aria-hidden="true"></i> Scheduled</span>
-          <span class="cal-legend-pill completed"><i aria-hidden="true"></i> Completed</span>
-          <span class="cal-legend-pill cancelled"><i aria-hidden="true"></i> Cancelled</span>
+
+        <div class="cal-filter-pills" role="group" aria-label="Filter calendar events">
+          <button
+            type="button"
+            class="cal-filter-pill"
+            class:active={filterMode === 'all'}
+            onclick={() => setFilter('all')}
+          >
+            All ({events.length})
+          </button>
+          <button
+            type="button"
+            class="cal-filter-pill"
+            class:active={filterMode === 'multiday'}
+            onclick={() => setFilter('multiday')}
+          >
+            Multi-day ต่อเนื่อง ({multiDayCount})
+          </button>
+          <button
+            type="button"
+            class="cal-filter-pill"
+            class:active={filterMode === 'Scheduled'}
+            onclick={() => setFilter('Scheduled')}
+          >
+            In Progress ({scheduledCount})
+          </button>
+          <button
+            type="button"
+            class="cal-filter-pill"
+            class:active={filterMode === 'Completed'}
+            onclick={() => setFilter('Completed')}
+          >
+            Completed ({completedCount})
+          </button>
+          {#if cancelledCount > 0}
+            <button
+              type="button"
+              class="cal-filter-pill"
+              class:active={filterMode === 'Cancelled'}
+              onclick={() => setFilter('Cancelled')}
+            >
+              Cancelled ({cancelledCount})
+            </button>
+          {/if}
         </div>
       </div>
 
       <div class="cal-controls">
-        {#if eventMonths.length}
-          <label class="cal-jump-wrap">
-            <span class="sr-only">Jump to month</span>
-            <select
-              id="calJumpMonth"
-              class="cal-jump-select"
-              aria-label="Jump to month"
-              value={calMonth}
-              onchange={(e) => jumpToMonth((e.target as HTMLSelectElement).value)}
-            >
-              {#each eventMonths as m (m.month)}
-                <option value={m.month}>
-                  {m.label} ({m.count})
-                </option>
-              {/each}
-            </select>
-          </label>
-        {/if}
+        <div class="cal-jump-group">
+          {#if eventMonths.length}
+            <label class="cal-jump-wrap">
+              <span class="sr-only">Jump to month</span>
+              <select
+                id="calJumpMonth"
+                class="cal-jump-select"
+                aria-label="Jump to month"
+                value={activeMonth}
+                onchange={(e) => jumpToMonth((e.target as HTMLSelectElement).value)}
+              >
+                {#each eventMonths as m (m.month)}
+                  <option value={m.month}>
+                    {m.label} ({m.count})
+                  </option>
+                {/each}
+              </select>
+            </label>
+          {/if}
 
-        <div class="cal-seg" role="group" aria-label="Calendar view">
+          {#if sortedEvents.length}
+            <label class="cal-jump-wrap">
+              <span class="sr-only">Jump to event</span>
+              <select
+                id="calJumpEvent"
+                class="cal-jump-select cal-jump-event"
+                aria-label="Jump to event"
+                value={selectedEvent?.event_id ?? ''}
+                onchange={(e) => jumpToEvent((e.target as HTMLSelectElement).value)}
+              >
+                <option value="">Jump to event...</option>
+                {#each sortedEvents as ev (ev.event_id)}
+                  <option value={ev.event_id}>
+                    {ev.event_id} &middot; {ev.title}
+                  </option>
+                {/each}
+              </select>
+            </label>
+          {/if}
+        </div>
+
+        <div class="cal-seg cal-seg-3" role="group" aria-label="Calendar view">
           <button
             type="button"
             id="calViewMonth"
@@ -235,6 +459,14 @@
           >
             Week
           </button>
+          <button
+            type="button"
+            id="calViewDay"
+            aria-pressed={viewMode === 'day'}
+            onclick={() => switchView('day')}
+          >
+            Day
+          </button>
         </div>
 
         <div class="cal-nav">
@@ -242,7 +474,7 @@
             class="btn small"
             id="calPrev"
             type="button"
-            aria-label={viewMode === 'month' ? 'Previous month' : 'Previous week'}
+            aria-label={`Previous ${viewMode}`}
             onclick={() => shiftPeriod(-1)}
           >
             &lsaquo;
@@ -252,7 +484,7 @@
             class="btn small"
             id="calNext"
             type="button"
-            aria-label={viewMode === 'month' ? 'Next month' : 'Next week'}
+            aria-label={`Next ${viewMode}`}
             onclick={() => shiftPeriod(1)}
           >
             &rsaquo;
@@ -262,291 +494,187 @@
       </div>
     </div>
 
-    <div class="cal-split">
+    <div class="cal-split cal-split-layout">
       <div class="cal-main">
-        {#if viewMode === 'month'}
-          <div class="cal-grid cal-dow" id="calDow">
-            {#each DOW_LABELS as d}
-              <div>{d}</div>
-            {/each}
-          </div>
-
-          <div class="cal-grid cal-month-unified" id="calGrid">
-            {#each calCells as cell (cell.key)}
-              {@const shownChips = cell.evs.length > 3 ? cell.evs.slice(0, 2) : cell.evs.slice(0, 3)}
-              <div
-                class="cal-cell"
-                class:other={cell.other}
-                class:today={cell.today}
-                class:selected={cell.selected}
-              >
-                <button
-                  type="button"
-                  class="cal-cell-hit"
-                  aria-pressed={cell.selected}
-                  aria-label={`${fmtDate(cell.key)}${
-                    cell.evs.length
-                      ? ': ' +
-                        cell.evs
-                          .map(
-                            (e) =>
-                              `${e.title}${e.dayCount > 1 ? ` day ${e.dayNo} of ${e.dayCount}` : ''} (${e.status})`
-                          )
-                          .join(', ')
-                      : ': no events'
-                  }`}
-                  onclick={() => (calSelected = cell.key)}
-                ></button>
-                <div class="cal-cell-top">
-                  <span class="cal-num" class:is-today={cell.today}>{cell.dayNum}</span>
-                  {#if cell.evs.length > 0}
-                    <span class="cal-ev-count" title={`${cell.evs.length} events`}>
-                      {cell.evs.length}
-                    </span>
-                  {/if}
-                </div>
-                {#each shownChips as e (e.event_id)}
-                  <button
-                    type="button"
-                    class={`chip ${e.status}`}
-                    title={`Open ${e.title}${e.dayCount > 1 ? ` (Day ${e.dayNo} of ${e.dayCount})` : ''}`}
-                    onclick={() => handleOpenEvent(e.event_id, cell.key)}
-                  >
-                    <span class="chip-title">
-                      {e.status === 'Completed' ? '✓ ' : ''}{e.title}
-                    </span>
-                    {#if e.dayCount > 1}
-                      <span class="chip-day">D{e.dayNo}</span>
-                    {/if}
-                  </button>
-                {/each}
-                {#if cell.evs.length > 3}
-                  <button
-                    type="button"
-                    class="cal-more-btn"
-                    onclick={() => (calSelected = cell.key)}
-                  >
-                    +{cell.evs.length - 2} more
-                  </button>
-                {/if}
-                {#if cell.evs.length}
-                  <span class="cal-dots" aria-hidden="true">
-                    {#each cell.evs as ev}
-                      <i class={`dot-${ev.status}`}></i>
-                    {/each}
-                  </span>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <div class="cal-week" id="calWeek">
-            <div class="cal-week-scroll">
-              <div class="cal-week-header">
-                {#each weekDays as day (day.key)}
-                  <button
-                    type="button"
-                    class="cal-week-hdr-btn"
-                    class:today={day.today}
-                    class:selected={day.selected}
-                    aria-pressed={day.selected}
-                    aria-label={`${fmtDate(day.key)}${day.evs.length ? `, ${day.evs.length} events` : ', no events'}`}
-                    onclick={() => (calSelected = day.key)}
-                  >
-                    <span class="cal-week-dow">{day.dowLabel}</span>
-                    <span class="cal-week-daynum" class:is-today={day.today}>{day.dayNum}</span>
-                    {#if day.evs.length}
-                      <span class="cal-week-hdr-dots" aria-hidden="true">
-                        {#each day.evs.slice(0, 4) as ev}
-                          <i class={`dot-${ev.status}`}></i>
-                        {/each}
-                      </span>
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-
-              <div class="cal-week-strip" aria-label="Multi-day events">
-                <div class="cal-week-strip-bg" aria-hidden="true">
-                  {#each weekDays as day (day.key)}
-                    <div class="cal-week-strip-col" class:today={day.today} class:selected={day.selected}></div>
-                  {/each}
-                </div>
-                {#if weekSpans.length}
-                  <div class="cal-week-spans">
-                    {#each weekSpans as span (span.event.event_id)}
-                      <button
-                        type="button"
-                        class={`cal-span-bar ${span.event.status}`}
-                        class:continues-before={span.continuesBefore}
-                        class:continues-after={span.continuesAfter}
-                        style={`grid-column: ${span.startCol} / span ${span.spanCols}; grid-row: ${span.lane + 1};`}
-                        title={`Open ${span.event.title} (${span.dayRangeText})`}
-                        onclick={() => handleOpenEvent(span.event.event_id, addDayStr(weekStart, span.startCol - 1))}
-                      >
-                        {#if span.continuesBefore}
-                          <span class="span-arrow" aria-label="Continues from previous week">&#9664;</span>
-                        {/if}
-                        <span class="span-title">
-                          {span.event.status === 'Completed' ? '✓ ' : ''}{span.event.title}
-                        </span>
-                        <span class="span-meta">
-                          <span class={`badge st-${span.event.status} span-status`}>{span.event.status}</span>
-                          <span class="span-days">{span.dayRangeText}</span>
-                        </span>
-                        {#if span.continuesAfter}
-                          <span class="span-arrow" aria-label="Continues into next week">&#9654;</span>
-                        {/if}
-                      </button>
-                    {/each}
-                  </div>
-                {:else}
-                  <p class="cal-week-strip-empty">No multi-day events this week</p>
-                {/if}
-              </div>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          id="calGrid"
+          class="svar-cal-wrapper"
+          class:is-compact={compact}
+          class:is-week-view={viewMode === 'week'}
+          onclick={handleSvarWrapperClick}
+        >
+          {#if browser}
+            {#if theme === 'dark'}
+              <WillowDark fonts={false}>
+                <SvarCalendar
+                  events={svarEvents}
+                  view={viewMode}
+                  views={SVAR_VIEWS}
+                  date={svarDate}
+                  toolbar={null}
+                  readonly={true}
+                  cellCss={computeCellCss}
+                  eventCss={computeEventCss}
+                  tooltip={CalendarTooltip}
+                  init={initSvarApi}
+                />
+              </WillowDark>
+            {:else}
+              <Willow fonts={false}>
+                <SvarCalendar
+                  events={svarEvents}
+                  view={viewMode}
+                  views={SVAR_VIEWS}
+                  date={svarDate}
+                  toolbar={null}
+                  readonly={true}
+                  cellCss={computeCellCss}
+                  eventCss={computeEventCss}
+                  tooltip={CalendarTooltip}
+                  init={initSvarApi}
+                />
+              </Willow>
+            {/if}
+          {:else}
+            <div class="cal-ssr-placeholder">
+              <p class="muted">Loading calendar for {calTitle || 'current period'}...</p>
             </div>
-
-            <div class="cal-week-agenda-bar">
-              <span class="cal-agenda-label">Weekly agenda</span>
-              <div class="cal-seg cal-agenda-filter" role="group" aria-label="Filter week days">
-                <button
-                  type="button"
-                  aria-pressed={weekFilter === 'all'}
-                  onclick={() => (weekFilter = 'all')}
-                >
-                  All 7 days
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={weekFilter === 'with-events'}
-                  onclick={() => (weekFilter = 'with-events')}
-                >
-                  Days with events
-                </button>
-              </div>
-            </div>
-
-            <div class="cal-week-agenda-list">
-              {#if !visibleWeekDays.length}
-                <p class="cal-week-strip-empty">No events scheduled for this week.</p>
-              {:else}
-                {#each visibleWeekDays as day (day.key)}
-                  <div
-                    class="cal-agenda-row"
-                    class:today={day.today}
-                    class:selected={day.selected}
-                    class:is-empty={!day.evs.length}
-                  >
-                    <button
-                      type="button"
-                      class="cal-agenda-date"
-                      onclick={() => (calSelected = day.key)}
-                    >
-                      <span class="date-tile cal-agenda-tile">
-                        <small>{day.dowLabel}</small>
-                        <b>{day.dayNum}</b>
-                        <small>{day.monthShort}</small>
-                      </span>
-                    </button>
-
-                    <div class="cal-agenda-events">
-                      {#if !day.evs.length}
-                        <button
-                          type="button"
-                          class="cal-agenda-row-empty"
-                          onclick={() => (calSelected = day.key)}
-                        >
-                          No events scheduled
-                        </button>
-                      {:else}
-                        {#each day.evs as ev (ev.event_id)}
-                          <div class={`cal-agenda-hcard ${ev.status}`}>
-                            <div class="cal-agenda-hcard-main">
-                              <div class="agenda-card-top">
-                                <span class="agenda-title">{ev.title}</span>
-                                <span class={`badge st-${ev.status}`}>{ev.status}</span>
-                              </div>
-                              <div class="agenda-meta">
-                                <span>{ev.location || 'TBA'}</span>
-                                <span>&middot;</span>
-                                <span>{ev.dayCount > 1 ? `Day ${ev.dayNo} of ${ev.dayCount}` : '1-day event'}</span>
-                                <span>&middot;</span>
-                                <span>Plan {baht(ev.budget_planned)} / Actual {baht(ev.actual)}</span>
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              class="btn small cal-open-btn"
-                              onclick={() => handleOpenEvent(ev.event_id, day.key)}
-                            >
-                              Open project &rarr;
-                            </button>
-                          </div>
-                        {/each}
-                      {/if}
-                    </div>
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          </div>
-        {/if}
+          {/if}
+        </div>
       </div>
 
       <aside class="cal-detail cal-inspector" id="calDetail" aria-live="polite">
-        {#if calSelected}
-          {@const list = byDate[calSelected] || []}
-          <div class="cal-detail-head">
-            <div>
-              <span class="eyebrow cal-inspector-eyebrow">SELECTED DAY</span>
-              <strong>{fmtDate(calSelected)}</strong>
+        {#if selectedEvent}
+          {@const colorIdx = getEventColorIndex(selectedEvent.event_id)}
+          {@const palette = EVENT_PALETTE[colorIdx]}
+          {@const budgetPctVal =
+            selectedEvent.pct == null ? 0 : Math.min(100, Math.round(selectedEvent.pct * 100))}
+          <div class={`cal-spotlight ${palette.cssClass}`}>
+            <div class="cal-spotlight-top">
+              <div class="cal-spotlight-badges">
+                <span class={`cal-color-dot ev-swatch-${colorIdx}`} aria-hidden="true"></span>
+                <span class="cal-spotlight-id">{selectedEvent.event_id}</span>
+                <span class={`badge st-${selectedEvent.status}`}>{selectedEvent.status}</span>
+                {#if selectedEvent.days > 1}
+                  <span class="cal-multiday-pill">{selectedEvent.days}d ต่อเนื่อง</span>
+                {/if}
+              </div>
+              <span class="badge">{selectedEvent.category}</span>
             </div>
-            <span class="pill">
-              {list.length} {list.length === 1 ? 'event' : 'events'}
-            </span>
+
+            <h4 class="cal-spotlight-title">{selectedEvent.title}</h4>
+
+            <dl class="cal-spotlight-facts">
+              <div>
+                <dt>Dates</dt>
+                <dd>{fmtRange(selectedEvent)}</dd>
+              </div>
+              <div>
+                <dt>Location</dt>
+                <dd>{selectedEvent.location || 'TBA'}</dd>
+              </div>
+              <div>
+                <dt>Attendance</dt>
+                <dd>
+                  {selectedEvent.attendees} checked in
+                  <small class="muted">
+                    ({selectedEvent.stats.staff} staff &middot; {selectedEvent.stats.participants} participants)
+                  </small>
+                </dd>
+              </div>
+              <div>
+                <dt>Budget</dt>
+                <dd>
+                  {baht(selectedEvent.actual)} / {baht(selectedEvent.budget_planned)}
+                  <small class="muted">({pct(selectedEvent.pct)})</small>
+                </dd>
+              </div>
+            </dl>
+
+            <div class="mini-progress" aria-hidden="true" style="margin-top:8px">
+              <span style={`width:${budgetPctVal}%`}></span>
+            </div>
+
+            {#if selectedEvent.description}
+              <p class="cal-spotlight-note">{selectedEvent.description}</p>
+            {/if}
+
+            <div class="cal-spotlight-actions">
+              <button
+                type="button"
+                class="btn primary small"
+                onclick={() => handleInspectProject(selectedEvent.event_id)}
+              >
+                Inspect Project &rarr;
+              </button>
+            </div>
           </div>
-          {#if !list.length}
-            <div class="cal-inspector-empty">
-              <p class="muted">No events scheduled on this day.</p>
-              <small class="muted">Click any highlighted date in the calendar to inspect its projects.</small>
+        {/if}
+
+        <div class="cal-day-section">
+          {#if calSelected}
+            <div class="cal-detail-head">
+              <div>
+                <span class="eyebrow cal-inspector-eyebrow">SELECTED DAY</span>
+                <strong>{fmtDate(calSelected)}</strong>
+              </div>
+              <span class="pill">
+                {selectedDayEvents.length} {selectedDayEvents.length === 1 ? 'event' : 'events'}
+              </span>
             </div>
-          {:else}
-            <ul>
-              {#each list as e (e.event_id)}
-                <li class={`cal-detail-item ${e.status}`}>
-                  <div class="cal-detail-info">
+
+            {#if !selectedDayEvents.length}
+              <div class="cal-inspector-empty">
+                <p class="muted">No events scheduled on this day.</p>
+                <small class="muted">
+                  Click any event bar or date cell in the calendar to inspect its details.
+                </small>
+              </div>
+            {:else}
+              <ul>
+                {#each selectedDayEvents as e (e.event_id)}
+                  {@const cIdx = getEventColorIndex(e.event_id)}
+                  <li
+                    class={`cal-detail-item ev-palette-${cIdx} ${e.status}`}
+                    class:is-focused={selectedEvent?.event_id === e.event_id}
+                  >
+                    <div class="cal-detail-info">
+                      <button
+                        type="button"
+                        class="cal-detail-link"
+                        onclick={() => (selectedEventId = e.event_id)}
+                      >
+                        <span class={`cal-color-dot ev-swatch-${cIdx}`} aria-hidden="true"></span>
+                        <strong>{e.title}</strong>
+                      </button>
+                      <span class="cal-detail-meta">
+                        <span class={`badge st-${e.status}`}>{e.status}</span>
+                        <span>{e.location || 'TBA'}</span>
+                        {#if e.dayCount > 1}
+                          <span>Day {e.dayNo} of {e.dayCount}</span>
+                        {/if}
+                      </span>
+                      <span class="cal-detail-budget">
+                        {baht(e.actual)} spent / {baht(e.budget_planned)} planned
+                      </span>
+                    </div>
                     <button
                       type="button"
-                      class="cal-detail-link"
-                      onclick={() => handleOpenEvent(e.event_id)}
+                      class="btn small cal-open-btn"
+                      onclick={() => handleInspectProject(e.event_id, calSelected ?? undefined)}
                     >
-                      <strong>{e.title}</strong>
+                      Open project &rarr;
                     </button>
-                    <span class="cal-detail-meta">
-                      <span class={`badge st-${e.status}`}>{e.status}</span>
-                      <span>{e.location || 'TBA'}</span>
-                      {#if e.dayCount > 1}
-                        <span>Day {e.dayNo} of {e.dayCount}</span>
-                      {/if}
-                    </span>
-                    <span class="cal-detail-budget">
-                      {baht(e.actual)} spent / {baht(e.budget_planned)} planned
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    class="btn small cal-open-btn"
-                    onclick={() => handleOpenEvent(e.event_id)}
-                  >
-                    Open project &rarr;
-                  </button>
-                </li>
-              {/each}
-            </ul>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          {:else}
+            <p class="muted">Select a day or event to inspect its details.</p>
           {/if}
-        {:else}
-          <p class="muted">Select a day to see its events.</p>
-        {/if}
+        </div>
       </aside>
     </div>
   </article>
