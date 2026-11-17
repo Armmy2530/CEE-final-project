@@ -57,6 +57,8 @@
   let calSelected = $state<string | null>(null);
   let selectedEventId = $state<string | null>(null);
   let svarApi = $state<CalendarInstanceApi | null>(null);
+  let monthDropOpen = $state(false);
+  let eventDropOpen = $state(false);
 
   const openProjectCb = $derived(onOpenProject ?? onSelectProject);
 
@@ -151,6 +153,15 @@
       }));
   });
 
+  const activeMonthEntry = $derived.by(
+    () =>
+      eventMonths.find((m) => m.month === activeMonth) ?? {
+        month: activeMonth,
+        label: getMonthTitle(activeMonth),
+        count: 0
+      }
+  );
+
   const selectedDayEvents = $derived.by(() => {
     if (!calSelected) return [];
     return byDate[calSelected] || [];
@@ -201,6 +212,7 @@
   }
 
   function jumpToMonth(monthStr: string) {
+    monthDropOpen = false;
     if (!monthStr) return;
     const firstWithEvent = Object.keys(byDate)
       .filter((d) => d.startsWith(`${monthStr}-`))
@@ -210,11 +222,39 @@
   }
 
   function jumpToEvent(eventId: string) {
+    eventDropOpen = false;
     if (!eventId) return;
     const ev = events.find((e) => e.event_id === eventId);
     if (!ev) return;
     anchorDate = ev.date;
     selectDay(ev.date, ev.event_id);
+  }
+
+  function toggleMonthDrop(e: MouseEvent) {
+    e.stopPropagation();
+    eventDropOpen = false;
+    monthDropOpen = !monthDropOpen;
+  }
+
+  function toggleEventDrop(e: MouseEvent) {
+    e.stopPropagation();
+    monthDropOpen = false;
+    eventDropOpen = !eventDropOpen;
+  }
+
+  function handleWindowClick(e: MouseEvent) {
+    const target = e.target as HTMLElement | null;
+    if (!target?.closest('.cal-dropdown')) {
+      monthDropOpen = false;
+      eventDropOpen = false;
+    }
+  }
+
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      monthDropOpen = false;
+      eventDropOpen = false;
+    }
   }
 
   function jumpToday() {
@@ -331,6 +371,8 @@
   }
 </script>
 
+<svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
+
 <section id="calendar" class="page-content" class:cal-compact={compact}>
   {#if standalone && !compact}
     <div class="page-heading">
@@ -403,42 +445,95 @@
       <div class="cal-controls">
         <div class="cal-jump-group">
           {#if eventMonths.length}
-            <label class="cal-jump-wrap">
-              <span class="sr-only">Jump to month</span>
-              <select
+            <div class="cal-jump-wrap cal-dropdown" class:is-open={monthDropOpen}>
+              <button
+                type="button"
                 id="calJumpMonth"
-                class="cal-jump-select"
+                class="cal-jump-select cal-dropdown-btn"
                 aria-label="Jump to month"
-                value={activeMonth}
-                onchange={(e) => jumpToMonth((e.target as HTMLSelectElement).value)}
+                aria-haspopup="listbox"
+                aria-expanded={monthDropOpen}
+                onclick={toggleMonthDrop}
               >
-                {#each eventMonths as m (m.month)}
-                  <option value={m.month}>
-                    {m.label} ({m.count})
-                  </option>
-                {/each}
-              </select>
-            </label>
+                <span class="cal-dropdown-label">
+                  {activeMonthEntry.label} ({activeMonthEntry.count})
+                </span>
+                <span class="cal-dropdown-caret" aria-hidden="true">&#9662;</span>
+              </button>
+              {#if monthDropOpen}
+                <ul class="cal-dropdown-menu" role="listbox" aria-label="Jump to month">
+                  {#each eventMonths as m (m.month)}
+                    <li role="option" aria-selected={m.month === activeMonth}>
+                      <button
+                        type="button"
+                        class="cal-dropdown-item"
+                        class:selected={m.month === activeMonth}
+                        onclick={() => jumpToMonth(m.month)}
+                      >
+                        <span class="cal-dropdown-item-main">{m.label}</span>
+                        <span class="cal-dropdown-badge">{m.count}</span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
           {/if}
 
           {#if sortedEvents.length}
-            <label class="cal-jump-wrap">
-              <span class="sr-only">Jump to event</span>
-              <select
+            <div class="cal-jump-wrap cal-dropdown cal-dropdown-event" class:is-open={eventDropOpen}>
+              <button
+                type="button"
                 id="calJumpEvent"
-                class="cal-jump-select cal-jump-event"
+                class="cal-jump-select cal-jump-event cal-dropdown-btn"
                 aria-label="Jump to event"
-                value={selectedEvent?.event_id ?? ''}
-                onchange={(e) => jumpToEvent((e.target as HTMLSelectElement).value)}
+                aria-haspopup="listbox"
+                aria-expanded={eventDropOpen}
+                onclick={toggleEventDrop}
               >
-                <option value="">Jump to event...</option>
-                {#each sortedEvents as ev (ev.event_id)}
-                  <option value={ev.event_id}>
-                    {ev.event_id} &middot; {ev.title}
-                  </option>
-                {/each}
-              </select>
-            </label>
+                {#if selectedEvent}
+                  <span
+                    class={`cal-color-dot ev-swatch-${getEventColorIndex(selectedEvent.event_id)}`}
+                    aria-hidden="true"
+                  ></span>
+                  <span class="cal-dropdown-label">
+                    {selectedEvent.event_id} &middot; {selectedEvent.title}
+                  </span>
+                {:else}
+                  <span class="cal-dropdown-label">Jump to event...</span>
+                {/if}
+                <span class="cal-dropdown-caret" aria-hidden="true">&#9662;</span>
+              </button>
+              {#if eventDropOpen}
+                <ul
+                  class="cal-dropdown-menu cal-event-menu"
+                  role="listbox"
+                  aria-label="Jump to event"
+                >
+                  {#each sortedEvents as ev (ev.event_id)}
+                    {@const evColor = getEventColorIndex(ev.event_id)}
+                    <li role="option" aria-selected={selectedEvent?.event_id === ev.event_id}>
+                      <button
+                        type="button"
+                        class="cal-dropdown-item cal-dropdown-event-item"
+                        class:selected={selectedEvent?.event_id === ev.event_id}
+                        onclick={() => jumpToEvent(ev.event_id)}
+                      >
+                        <span class={`cal-color-dot ev-swatch-${evColor}`} aria-hidden="true"></span>
+                        <span class="cal-dropdown-event-text">
+                          <span class="cal-dropdown-event-title">
+                            <strong>{ev.event_id}</strong> &middot; {ev.title}
+                          </span>
+                          <small class="cal-dropdown-event-meta">
+                            {fmtDate(ev.date)}{ev.days > 1 ? ` · ${ev.days}d ต่อเนื่อง` : ''}
+                          </small>
+                        </span>
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
           {/if}
         </div>
 
