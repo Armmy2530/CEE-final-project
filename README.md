@@ -4,6 +4,8 @@ Web dashboard for a student club committee built with **Bun + SvelteKit 2 (Svelt
 
 > All bundled data in this repository is **mock data** (`6600000001`–`6600000067` for club members, `6600000068`–`6600000732` for external event attendees, `AC-001`–`AC-020` for events) with fictional names. Do not put real personal data, student IDs, phone numbers, or private photos into public sheets.
 
+![Clubhouse Activity Dashboard](./docs/images/dashboard-preview.png)
+
 ## Features
 
 | Area | What it does |
@@ -24,7 +26,49 @@ Web dashboard for a student club committee built with **Bun + SvelteKit 2 (Svelt
 - **Framework:** SvelteKit 2 + Svelte 5 (runes) + TypeScript + `svelte-adapter-bun`
 - **UI & Calendar:** `@svar-ui/svelte-calendar`, `@humanspeak/svelte-markdown`, custom CSS design tokens
 - **Integrations:** Google Sheets API v4 / keyless `gviz` CSV, Google Drive API v3, Supabase Google OAuth, OpenRouter Chat Completions API
-- **Deployment & Testing:** Docker (`oven/bun:1-alpine`), Render Blueprint (`render.yaml`), Docker Compose (`cloudflared` profile), `bun test`, `tsc --noEmit`
+- **Deployment & Testing:** Docker (`oven/bun:1-alpine`), Render Blueprint (`render.yaml`), `bun test`, `tsc --noEmit`
+
+### Architecture & Tech Stack Diagram
+
+```mermaid
+flowchart LR
+  subgraph Client["Frontend (Browser)"]
+    UI["SvelteKit 2 + Svelte 5 (Runes)<br/>TypeScript · Custom CSS Tokens"]
+    CAL["@svar-ui/svelte-calendar<br/>(Month / Week / Day + Inspector)"]
+    MD["@humanspeak/svelte-markdown<br/>(Clubhouse AI Chat Widget)"]
+    UI --> CAL
+    UI --> MD
+  end
+
+  subgraph Server["Backend (Bun + svelte-adapter-bun)"]
+    HOOKS["hooks.server.ts<br/>Auth · CSP · CSRF · Rate Limit"]
+    API["REST API Routes<br/>/api/dashboard · /api/auth/*<br/>/api/sheets/* · /api/chat"]
+    ENGINE["Dashboard Aggregator<br/>& Alert Engine"]
+    HOOKS --> API --> ENGINE
+  end
+
+  subgraph Data["Persistence & Identity"]
+    SQLITE[("Local SQLite<br/>bun:sqlite / node:sqlite")]
+    SUPA[("Supabase PostgreSQL<br/>schema: public-cee-v2")]
+    OAUTH["Supabase Google OAuth<br/>(Linked Sign-In & Drive Scopes)"]
+    SQLITE <-->|"Hybrid Sync"| SUPA
+  end
+
+  subgraph External["External Services & Data Sources"]
+    SHEETS["Google Sheets API v4<br/>/ Keyless gviz CSV"]
+    DRIVE["Google Drive API v3<br/>(Admin Sheet Picker)"]
+    MOCK["Bundled sample-sheets/<br/>(CSV + 4-tab .xlsx Fallback)"]
+    AI["OpenRouter AI API<br/>(with Offline Fallback)"]
+  end
+
+  Client <-->|"HTTPS / JSON + HttpOnly Cookie"| HOOKS
+  API <--> SQLITE
+  API <--> OAUTH
+  ENGINE <--> SHEETS
+  API <--> DRIVE
+  ENGINE -.->|"Fallback"| MOCK
+  API <--> AI
+```
 
 ## Run Locally
 
@@ -87,13 +131,10 @@ This repository includes a production [`Dockerfile`](./Dockerfile) and [`render.
 
 > Even when Render's free container restarts with an ephemeral filesystem, the app automatically re-hydrates all user accounts, passwords, sessions, theme preferences, Google account links, and sheet settings from **Supabase (`public-cee-v2`)**.
 
-### Docker Compose & Optional Cloudflare Tunnel
+### Local Docker Compose
 ```bash
-# Run locally in Docker on http://localhost:3000
+# Build and run in Docker on http://localhost:3000
 docker compose up -d --build
-
-# Or run with Cloudflare Tunnel (requires CLOUDFLARE_TUNNEL_TOKEN in .env)
-docker compose --profile tunnel up -d --build
 ```
 
 ## Security Notes
@@ -123,7 +164,7 @@ See [`docs/adr/README.md`](./docs/adr/README.md) for all architecture decision r
 
 ```text
 Dockerfile                 Multi-stage oven/bun:1-alpine production image
-docker-compose.yml         Local Docker + optional cloudflared tunnel profile
+docker-compose.yml         Local Docker Compose configuration
 render.yaml                Render Blueprint (Free Docker Web Service)
 supabase/
   schema.sql               PostgreSQL schema for public-cee-v2 hybrid persistence
@@ -149,7 +190,9 @@ src/
     api/                   REST endpoints (/health, /me, /me/theme, /dashboard, /chat,
                            /auth/{login,logout,register,setup,google},
                            /sheets/{config,drive,export-csv}, /admin/users/*)
-docs/adr/                  Architecture Decision Records (0001–0011)
+docs/
+  adr/                     Architecture Decision Records (0001–0011)
+  images/                  Dashboard preview screenshots
 sample-sheets/             Members.csv, Events.csv, Attendance.csv, Budget.csv,
                            Clubhouse-Google-Sheet-Ready.xlsx
 scripts/                   build-mock-sheets.py, export-sample-sheets.js
