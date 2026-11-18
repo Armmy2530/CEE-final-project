@@ -18,6 +18,7 @@
     isAdmin = false,
     onRefresh,
     onSelectPage,
+    onSelectProject,
     onOpenSheetPicker
   }: {
     dash: DashboardPayload | null;
@@ -26,6 +27,7 @@
     isAdmin?: boolean;
     onRefresh?: () => void;
     onSelectPage?: (page: PageId) => void;
+    onSelectProject?: (eventId: string) => void;
     onOpenSheetPicker?: () => void;
   } = $props();
 
@@ -95,7 +97,11 @@
   });
 
   function selectProject(id: string) {
-    selectedProjectId = id;
+    if (onSelectProject) {
+      onSelectProject(id);
+    } else {
+      selectedProjectId = id;
+    }
     showAllTx = false;
     showRoster = false;
   }
@@ -520,7 +526,11 @@
                   }}
                 >
                   <span>Display by <strong>{GROUP_LABEL[groupBy]}</strong></span>
-                  <span aria-hidden="true">&#8964;</span>
+                  <span class="ac-display-caret" class:is-open={displayDropOpen} aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
                 </button>
 
                 {#if displayDropOpen}

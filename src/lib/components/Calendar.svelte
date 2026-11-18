@@ -458,7 +458,11 @@
                 <span class="cal-dropdown-label">
                   {activeMonthEntry.label} ({activeMonthEntry.count})
                 </span>
-                <span class="cal-dropdown-caret" aria-hidden="true">&#9662;</span>
+                <span class="cal-dropdown-caret" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
               </button>
               {#if monthDropOpen}
                 <ul class="cal-dropdown-menu" role="listbox" aria-label="Jump to month">
@@ -502,7 +506,11 @@
                 {:else}
                   <span class="cal-dropdown-label">Jump to event...</span>
                 {/if}
-                <span class="cal-dropdown-caret" aria-hidden="true">&#9662;</span>
+                <span class="cal-dropdown-caret" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
               </button>
               {#if eventDropOpen}
                 <ul

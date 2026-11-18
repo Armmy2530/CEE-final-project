@@ -155,7 +155,11 @@
               {:else}
                 Summary
               {/if}
-              <span class="ac-caret" aria-hidden="true">&#8964;</span>
+              <span class="ac-caret" class:is-open={summaryMenuOpen} aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
             </button>
 
             {#if summaryMenuOpen}
@@ -309,7 +313,11 @@
               <b id="userName">{user.full_name}</b>
               <small id="userRole">{user.role === 'admin' ? 'Admin' : 'Member'}</small>
             </span>
-            <span class="ac-user-caret" aria-hidden="true">&#8964;</span>
+            <span class="ac-user-caret" class:is-open={userMenuOpen} aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
           </button>
 
           {#if userMenuOpen}

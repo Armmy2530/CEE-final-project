@@ -13,8 +13,7 @@
     onRefresh,
     onOpenProject,
     onSelectPage,
-    onOpenSheetPicker,
-    onNotifyMe
+    onOpenSheetPicker
   }: {
     dash: DashboardPayload | null;
     loadError: string;
@@ -25,7 +24,6 @@
     onOpenProject: (eventId: string) => void;
     onSelectPage: (page: PageId) => void;
     onOpenSheetPicker?: () => void;
-    onNotifyMe?: () => void;
   } = $props();
 
   let yearFilter = $state<'all' | '2026' | '2027'>('all');
@@ -560,20 +558,6 @@
           <h2>Upcoming events</h2>
           <p class="ac-card-sub">next 30 days</p>
         </div>
-        <button
-          type="button"
-          class="ac-notify-link"
-          onclick={() => {
-            if (onNotifyMe) onNotifyMe();
-            else onSelectPage('calendar');
-          }}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke-linejoin="round" />
-            <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-linecap="round" />
-          </svg>
-          Notify me
-        </button>
       </div>
 
       <div class="ac-upcoming-list">

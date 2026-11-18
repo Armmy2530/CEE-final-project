@@ -162,8 +162,11 @@
   </div>
 
   <div class="project-toolbar">
-    <div class="search-box">
-      <span aria-hidden="true">&#8981;</span>
+    <div class="search-box ac-proj-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" stroke-linecap="round" />
+      </svg>
       <label class="sr-only" for="txSearch">Search transactions</label>
       <input
         id="txSearch"

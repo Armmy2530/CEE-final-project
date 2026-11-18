@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pushState, replaceState } from '$app/navigation';
   import { getContext, onMount } from 'svelte';
   import AuthView from '$lib/components/AuthView.svelte';
   import BudgetView from '$lib/components/BudgetView.svelte';
@@ -31,6 +32,8 @@
   let toasts = $state<ToastItem[]>([]);
   let nextToastId = 1;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const VALID_PAGES = new Set<PageId>(['summary', 'projects', 'calendar', 'members', 'budget', 'users']);
 
   const isAdmin = $derived(user?.role === 'admin');
 
@@ -148,10 +151,46 @@
     }
   }
 
+  function buildRouteUrl(p: PageId, projectId: string | null): string {
+    const sp = new URLSearchParams();
+    if (p !== 'summary') sp.set('page', p);
+    if (p === 'projects' && projectId) sp.set('project', projectId);
+    const qs = sp.toString();
+    return qs ? `/?${qs}` : '/';
+  }
+
+  function parseRouteFromSearch(search: string, admin: boolean): { page: PageId; projectId: string | null } {
+    const sp = new URLSearchParams(search);
+    const rawPage = sp.get('page') as PageId | null;
+    const page: PageId =
+      rawPage && VALID_PAGES.has(rawPage) && (rawPage !== 'users' || admin) ? rawPage : 'summary';
+    const rawProject = sp.get('project');
+    return {
+      page,
+      projectId: page === 'projects' && rawProject ? rawProject : null
+    };
+  }
+
+  function pushRoute(p: PageId, projectId: string | null) {
+    if (typeof window === 'undefined') return;
+    try {
+      pushState(buildRouteUrl(p, projectId), { page: p, projectId });
+    } catch {
+      // Fallback if called before router init
+    }
+  }
+
   function enterApp(u: SessionUser) {
     authError = '';
     user = u;
-    activePage = 'summary';
+    if (typeof window !== 'undefined') {
+      const parsed = parseRouteFromSearch(window.location.search, u.role === 'admin');
+      activePage = parsed.page;
+      selectedProjectId = parsed.projectId;
+    } else {
+      activePage = 'summary';
+      selectedProjectId = null;
+    }
     if (u.theme === 'light' || u.theme === 'dark') {
       themeCtx.set(u.theme);
     }
@@ -198,9 +237,18 @@
     stopPolling();
     user = null;
     dash = null;
+    activePage = 'summary';
+    selectedProjectId = null;
     toasts = [];
     notifOpen = false;
     sheetPickerOpen = false;
+    if (typeof window !== 'undefined') {
+      try {
+        replaceState('/', { page: 'summary', projectId: null });
+      } catch {
+        // ignore
+      }
+    }
   }
 
   async function handleSetTheme(t: ThemeMode) {
@@ -216,15 +264,42 @@
   }
 
   function selectPage(p: PageId) {
+    const nextProjectId = p === 'projects' ? null : null;
+    const changed = activePage !== p || selectedProjectId !== nextProjectId;
     if (p === 'projects') selectedProjectId = null;
+    else selectedProjectId = null;
     activePage = p;
+    if (changed) pushRoute(p, null);
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function openProject(eventId: string) {
+    const changed = activePage !== 'projects' || selectedProjectId !== eventId;
     selectedProjectId = eventId;
     activePage = 'projects';
+    if (changed) pushRoute('projects', eventId);
     if (typeof window !== 'undefined') window.scrollTo(0, 0);
+  }
+
+  function selectProjectInView(eventId: string) {
+    const changed = activePage !== 'projects' || selectedProjectId !== eventId;
+    selectedProjectId = eventId;
+    if (changed) pushRoute('projects', eventId);
+  }
+
+  function handlePopState(event: PopStateEvent) {
+    if (!user) return;
+    const st = (event.state?.['sveltekit:states'] ?? null) as App.PageState | null;
+    if (st?.page && VALID_PAGES.has(st.page)) {
+      activePage = st.page === 'users' && !isAdmin ? 'summary' : st.page;
+      selectedProjectId = activePage === 'projects' ? (st.projectId ?? null) : null;
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      const parsed = parseRouteFromSearch(window.location.search, isAdmin);
+      activePage = parsed.page;
+      selectedProjectId = parsed.projectId;
+    }
   }
 
   async function handleSheetConnected(message: string) {
@@ -371,6 +446,9 @@
         }
 
         if (user) {
+          const initialRoute = parseRouteFromSearch(window.location.search, user.role === 'admin');
+          activePage = initialRoute.page;
+          selectedProjectId = initialRoute.projectId;
           loadDashboard(false, true);
           startPolling();
           if (qGoogleLinked === '1') {
@@ -398,7 +476,7 @@
   });
 </script>
 
-<svelte:window onmessage={handleOAuthWindowMessage} />
+<svelte:window onmessage={handleOAuthWindowMessage} onpopstate={handlePopState} />
 
 {#if !user}
   <AuthView onSuccess={enterApp} externalError={authError} />
@@ -438,10 +516,6 @@
           onOpenProject={openProject}
           onSelectPage={selectPage}
           onOpenSheetPicker={isAdmin ? openSheetPicker : undefined}
-          onNotifyMe={() => {
-            notifOpen = true;
-            markSeen();
-          }}
         />
       {:else if activePage === 'projects'}
         <ProjectsView
@@ -451,6 +525,7 @@
           {isAdmin}
           onRefresh={() => loadDashboard(true, false)}
           onSelectPage={selectPage}
+          onSelectProject={selectProjectInView}
           onOpenSheetPicker={isAdmin ? openSheetPicker : undefined}
         />
       {:else if activePage === 'calendar'}
