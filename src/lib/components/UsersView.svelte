@@ -158,7 +158,7 @@
           ariaLabel="Permission"
           bind:value={newRole}
           options={ROLE_OPTIONS}
-          align="left"
+          align="right"
           size="md"
           fullWidth
         />

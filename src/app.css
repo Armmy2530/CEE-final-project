@@ -2123,6 +2123,7 @@ h1 {
 
 .filter-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -5109,12 +5110,21 @@ select:focus-visible {
   }
   .filter-actions {
     width: 100%;
+    justify-content: stretch;
   }
   .filter-actions .ac-display-by {
-    flex: 1 1 140px;
+    flex: 1 1 150px;
+    min-width: 0;
   }
   .filter-actions .ac-display-btn {
     width: 100%;
+  }
+  .filter-actions .ac-display-menu {
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
   .table-wrap {
     overflow-x: auto;

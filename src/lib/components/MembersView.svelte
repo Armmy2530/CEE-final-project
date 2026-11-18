@@ -222,7 +222,7 @@
         ariaLabel="Filter by department"
         bind:value={deptFilter}
         options={deptSelectOptions}
-        align="left"
+        align="right"
         size="md"
       />
 
@@ -231,7 +231,7 @@
         ariaLabel="Filter by academic year"
         bind:value={yearFilter}
         options={yearSelectOptions}
-        align="left"
+        align="right"
         size="md"
       />
 
@@ -240,7 +240,7 @@
         ariaLabel="Filter by status"
         bind:value={statusFilter}
         options={statusSelectOptions}
-        align="left"
+        align="right"
         size="md"
       />
     </div>

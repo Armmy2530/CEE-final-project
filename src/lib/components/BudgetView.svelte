@@ -195,7 +195,7 @@
         ariaLabel="Filter by transaction type"
         bind:value={typeFilter}
         options={typeSelectOptions}
-        align="left"
+        align="right"
         size="md"
       />
 
@@ -204,7 +204,7 @@
         ariaLabel="Filter by category"
         bind:value={categoryFilter}
         options={categorySelectOptions}
-        align="left"
+        align="right"
         size="md"
       />
     </div>
