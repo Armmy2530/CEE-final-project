@@ -1,9 +1,26 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
+  import {
+    Calendar as SvarCalendar,
+    Willow,
+    WillowDark,
+    type CalendarInstanceApi,
+    type CellContext
+  } from '@svar-ui/svelte-calendar';
+  import {
+    formatLocalIso,
+    getMonthTitle,
+    parseLocalDate,
+    shiftMonthStr,
+    toSvarEvents
+  } from '$lib/calendar';
   import { addDayStr, baht, getDisplayStatus, type DisplayStatus } from '$lib/format';
   import type { DashboardPayload, ProjectSummary, ThemeMode } from '$lib/types';
-  import Calendar from './Calendar.svelte';
+  import CalendarTooltip from './CalendarTooltip.svelte';
   import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
   import type { PageId } from './Topbar.svelte';
+
+  const SVAR_MONTH_VIEWS = ['month'];
 
   const YEAR_OPTIONS: SelectOption[] = [
     { value: 'all', label: 'Academic year 2026' },
@@ -36,9 +53,16 @@
   } = $props();
 
   let yearFilter = $state<'all' | '2026' | '2027'>('all');
+  let calMonth = $state('');
   let hoveredBudgetIdx = $state<number | null>(null);
 
   const today = $derived(dash?.today || '2026-11-18');
+
+  $effect(() => {
+    if (!calMonth && today) {
+      calMonth = today.slice(0, 7);
+    }
+  });
 
   const lastUpdatedText = $derived.by(() => {
     const ts = dash?.meta?.fetchedAt;
@@ -156,6 +180,35 @@
   const topParticipantMax = $derived.by(() => {
     return Math.max(1, ...topParticipantEvents.map((e) => participantCount(e)));
   });
+
+  const svarEvents = $derived.by(() => toSvarEvents(scopedEvents));
+  const svarDate = $derived.by(() =>
+    parseLocalDate(calMonth ? `${calMonth}-01` : today || '2026-11-18')
+  );
+
+  function computeCellCss(ctx: CellContext): string {
+    if (!ctx.date) return '';
+    const iso = formatLocalIso(ctx.date);
+    return today && iso === today ? `club-cell-${iso} club-cell-today` : `club-cell-${iso}`;
+  }
+
+  function initSvarApi(api: CalendarInstanceApi) {
+    api.intercept('select-event', (ev) => {
+      if (ev && 'id' in ev && ev.id != null) {
+        onOpenProject(String(ev.id));
+      }
+      return false;
+    });
+    api.intercept('navigate-to', (ev) => {
+      if (ev && 'view' in ev && ev.view !== 'month') {
+        return false;
+      }
+    });
+    api.intercept('add-event', () => false);
+    api.intercept('update-event', () => false);
+    api.intercept('move-event', () => false);
+    api.intercept('delete-event', () => false);
+  }
 
   interface UpcomingMilestone {
     event: ProjectSummary;
@@ -439,43 +492,122 @@
     </article>
   </div>
 
-  <!-- Events Calendar (shared with Calendar page) -->
-  <Calendar events={scopedEvents} {today} {theme} standalone={false} {onOpenProject} />
-
-  <!-- Upcoming Events Row -->
-  <article class="ac-card ac-upcoming-card">
-    <div class="ac-card-head">
-      <div>
-        <h2>Upcoming events</h2>
-        <p class="ac-card-sub">next 30 days</p>
-      </div>
-    </div>
-
-    <div class="ac-upcoming-list is-wide">
-      {#if !upcomingList.length}
-        <p class="muted" style="padding:18px 0">No upcoming activities in the next 30 days.</p>
-      {:else}
-        {#each upcomingList as item (item.event.event_id + item.kind)}
-          {@const tile = dateTile(item.targetDate)}
+  <!-- Bottom Schedule Row -->
+  <div class="ac-bot-grid">
+    <article class="ac-card ac-cal-card">
+      <div class="ac-card-head ac-cal-card-head">
+        <div class="ac-cal-title-nav">
+          <h2>Events calendar</h2>
+          <div class="ac-month-stepper">
+            <button
+              type="button"
+              aria-label="Previous month"
+              onclick={() => (calMonth = shiftMonthStr(calMonth, -1))}
+            >
+              &#8249;
+            </button>
+            <span>{getMonthTitle(calMonth)}</span>
+            <button
+              type="button"
+              aria-label="Next month"
+              onclick={() => (calMonth = shiftMonthStr(calMonth, 1))}
+            >
+              &#8250;
+            </button>
+          </div>
           <button
             type="button"
-            class="ac-upcoming-row"
-            onclick={() => onOpenProject(item.event.event_id)}
+            class="ac-cal-today-btn"
+            onclick={() => (calMonth = today.slice(0, 7))}
           >
-            <div class="ac-up-tile">
-              <small>{tile.month}</small>
-              <b>{tile.day}</b>
-            </div>
-            <div class="ac-up-info">
-              <strong>{item.event.event_id} {item.event.title}</strong>
-              <span>
-                {milestonePhrase(item)}
-                <em class={`ac-up-st ${statusTone(item.status)}`}>{item.status}</em>
-              </span>
-            </div>
+            Today
           </button>
-        {/each}
-      {/if}
-    </div>
-  </article>
+        </div>
+
+        {#if onSelectPage}
+          <button
+            type="button"
+            class="ac-notify-link"
+            onclick={() => onSelectPage('calendar')}
+          >
+            Full calendar &rarr;
+          </button>
+        {/if}
+      </div>
+
+      <div class="svar-cal-wrapper is-compact">
+        {#if browser}
+          {#if theme === 'dark'}
+            <WillowDark fonts={false}>
+              <SvarCalendar
+                events={svarEvents}
+                view="month"
+                views={SVAR_MONTH_VIEWS}
+                date={svarDate}
+                toolbar={null}
+                readonly={true}
+                cellCss={computeCellCss}
+                tooltip={CalendarTooltip}
+                init={initSvarApi}
+              />
+            </WillowDark>
+          {:else}
+            <Willow fonts={false}>
+              <SvarCalendar
+                events={svarEvents}
+                view="month"
+                views={SVAR_MONTH_VIEWS}
+                date={svarDate}
+                toolbar={null}
+                readonly={true}
+                cellCss={computeCellCss}
+                tooltip={CalendarTooltip}
+                init={initSvarApi}
+              />
+            </Willow>
+          {/if}
+        {:else}
+          <div class="cal-ssr-placeholder">
+            <p class="muted">Loading calendar for {getMonthTitle(calMonth)}...</p>
+          </div>
+        {/if}
+      </div>
+    </article>
+
+    <article class="ac-card ac-upcoming-card">
+      <div class="ac-card-head">
+        <div>
+          <h2>Upcoming events</h2>
+          <p class="ac-card-sub">next 30 days</p>
+        </div>
+      </div>
+
+      <div class="ac-upcoming-list">
+        {#if !upcomingList.length}
+          <p class="muted" style="padding:18px 0">No upcoming activities in the next 30 days.</p>
+        {:else}
+          {#each upcomingList as item (item.event.event_id + item.kind)}
+            {@const tile = dateTile(item.targetDate)}
+            <button
+              type="button"
+              class="ac-upcoming-row"
+              onclick={() => onOpenProject(item.event.event_id)}
+            >
+              <div class="ac-up-tile">
+                <small>{tile.month}</small>
+                <b>{tile.day}</b>
+              </div>
+              <div class="ac-up-info">
+                <strong>{item.event.event_id} {item.event.title}</strong>
+                <span>
+                  {milestonePhrase(item)}
+                  <em class={`ac-up-st ${statusTone(item.status)}`}>{item.status}</em>
+                </span>
+              </div>
+            </button>
+          {/each}
+        {/if}
+      </div>
+    </article>
+  </div>
 </section>

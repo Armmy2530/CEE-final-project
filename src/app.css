@@ -6274,6 +6274,7 @@ body {
 .ac-cal-card,
 .ac-upcoming-card {
   padding: 18px 20px;
+  min-width: 0;
 }
 
 .ac-card-head {
@@ -6736,20 +6737,27 @@ body {
   height: 13px;
 }
 
-.ac-summary-cal {
-  width: 100%;
-  min-width: 0;
+.ac-cal-today-btn {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ac-border);
+  border-radius: 7px;
+  background: var(--ac-cream-soft);
+  color: var(--ac-ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ac-cal-today-btn:hover {
+  background: var(--ac-cream);
+  border-color: var(--ac-border-strong);
 }
 
 .ac-upcoming-list {
   margin-top: 12px;
   display: grid;
   gap: 10px;
-}
-
-.ac-upcoming-list.is-wide {
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px 12px;
 }
 
 .ac-upcoming-row {
@@ -6766,19 +6774,8 @@ body {
   min-width: 0;
 }
 
-.ac-upcoming-list.is-wide .ac-upcoming-row {
-  border: 1px solid var(--ac-border);
-  background: var(--ac-cream-soft);
-  padding: 10px 12px;
-}
-
 .ac-upcoming-row:hover {
   background: var(--ac-cream-soft);
-}
-
-.ac-upcoming-list.is-wide .ac-upcoming-row:hover {
-  background: var(--ac-cream);
-  border-color: var(--ac-border-strong);
 }
 
 .ac-up-tile {
