@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { normalizeMemberId } from '$lib/server/db';
-import { getClientIp, jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
+import { jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
 import { validPassword } from '$lib/server/runtime';
 
 export const GET: RequestHandler = async (event) => {
@@ -54,11 +54,6 @@ export const POST: RequestHandler = async (event) => {
   } catch (e) {
     const err = e as { code?: number; message?: string };
     return jsonFail(err.code || 400, err.message || 'bad json');
-  }
-
-  const ip = getClientIp(event);
-  if (!rt.loginLimit.take(`setup:${ip}`)) {
-    return jsonFail(429, 'Too many attempts. Try again later.');
   }
 
   const { member_id, password } = body;
