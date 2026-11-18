@@ -87,14 +87,15 @@
 
 <button
   id="chatFab"
-  class="assistant-fab"
+  class="assistant-fab ac-ai-pill"
   type="button"
-  aria-label="Open Clubhouse assistant"
+  aria-label="Ask club AI"
   aria-expanded={open}
   bind:this={fabEl}
   onclick={() => toggleOpen(!open)}
 >
   <span aria-hidden="true">&#10022;</span>
+  <span>Ask club AI</span>
 </button>
 
 {#if open}

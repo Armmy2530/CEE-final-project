@@ -438,6 +438,10 @@
           onOpenProject={openProject}
           onSelectPage={selectPage}
           onOpenSheetPicker={isAdmin ? openSheetPicker : undefined}
+          onNotifyMe={() => {
+            notifOpen = true;
+            markSeen();
+          }}
         />
       {:else if activePage === 'projects'}
         <ProjectsView
