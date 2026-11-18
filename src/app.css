@@ -5127,9 +5127,6 @@ select:focus-visible {
     padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
     gap: 2px;
   }
-  .mobile-bottom-nav.has-users {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
   .mobile-nav-item {
     border: 0;
     background: transparent;

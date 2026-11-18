@@ -425,7 +425,7 @@
     {@render children?.()}
   </main>
 
-  <nav class="mobile-bottom-nav" class:has-users={user.role === 'admin'} aria-label="Quick navigation">
+  <nav class="mobile-bottom-nav" aria-label="Quick navigation">
     <button
       type="button"
       class="mobile-nav-item"
@@ -500,22 +500,5 @@
       </span>
       <span>Budget</span>
     </button>
-    {#if user.role === 'admin'}
-      <button
-        type="button"
-        class="mobile-nav-item"
-        class:active={activePage === 'users'}
-        onclick={() => navigate('users')}
-      >
-        <span class="mobile-nav-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3 4 6.5v5.5c0 4.6 3.4 8.7 8 9.8 4.6-1.1 8-5.2 8-9.8V6.5L12 3Z" />
-            <circle cx="12" cy="10.5" r="2.2" />
-            <path d="M8.5 16.5a3.7 3.7 0 0 1 7 0" />
-          </svg>
-        </span>
-        <span>Users</span>
-      </button>
-    {/if}
   </nav>
 </div>
