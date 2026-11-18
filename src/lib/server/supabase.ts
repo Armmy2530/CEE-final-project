@@ -483,6 +483,26 @@ export function createSupabaseClient({
           { Prefer: 'return=minimal' }
         );
       },
+      async setRole(id, role) {
+        const u = await store.getUser(id);
+        if (!u) return 'not_found';
+        if (u.role === role) return 'ok';
+        if (u.role === 'admin' && role !== 'admin') {
+          const admins =
+            (await requestStrict<Array<{ member_id: string }>>(
+              'GET',
+              'users?select=member_id&role=eq.admin'
+            )) || [];
+          if (admins.length <= 1) return 'last_admin';
+        }
+        await requestStrict(
+          'PATCH',
+          `users?member_id=eq.${encodeURIComponent(u.member_id)}`,
+          { role },
+          { Prefer: 'return=minimal' }
+        );
+        return 'ok';
+      },
       async deleteUser(id) {
         const u = await store.getUser(id);
         if (!u) return 'not_found';
@@ -781,6 +801,18 @@ export function createSupabaseStore(supa: SupabaseClient): AppStore {
         ),
         'createUser'
       );
+    },
+    async setRole(id, role) {
+      const u = await supa.getUser(id);
+      if (!u) return 'not_found';
+      if (u.role === role) return 'ok';
+      if (u.role === 'admin' && role !== 'admin') {
+        const all = await supa.listUsers();
+        if (!all) throw new StoreUnavailableError('Supabase listUsers failed');
+        if (all.filter((x) => x.role === 'admin').length <= 1) return 'last_admin';
+      }
+      must(await supa.upsertUsers([{ ...u, role }], false), 'setRole');
+      return 'ok';
     },
     async deleteUser(id) {
       const u = await supa.getUser(id);

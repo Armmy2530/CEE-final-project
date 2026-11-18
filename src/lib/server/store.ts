@@ -27,6 +27,7 @@ export interface AppStore {
   listAllUserRows(): Promise<DbUserRow[]>;
   upsertUserFromRemote(u: DbUserRow): Promise<void>;
   createUser(member_id: string, full_name: string, role: UserRole): Promise<void>;
+  setRole(id: string, role: UserRole): Promise<'not_found' | 'last_admin' | 'ok'>;
   deleteUser(id: string): Promise<'not_found' | 'last_admin' | 'ok'>;
   setPassword(id: string, password: string): Promise<void>;
   resetPassword(id: string): Promise<void>;

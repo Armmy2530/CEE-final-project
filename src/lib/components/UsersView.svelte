@@ -2,8 +2,14 @@
   import { apiFetch } from '$lib/format';
   import { validateStudentId } from '$lib/validation';
   import type { PublicUser, SessionUser, UserRole } from '$lib/types';
+  import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
 
   let { currentUser }: { currentUser: SessionUser } = $props();
+
+  const ROLE_OPTIONS: SelectOption<UserRole>[] = [
+    { value: 'user', label: 'Normal user' },
+    { value: 'admin', label: 'Admin' }
+  ];
 
   let users = $state<PublicUser[]>([]);
   let newId = $state('');
@@ -12,6 +18,7 @@
   let note = $state('');
   let noteErr = $state(false);
   let busy = $state(false);
+  let roleBusyId = $state<string | null>(null);
 
   const trimmedNewId = $derived(newId.trim());
   const newIdError = $derived(trimmedNewId ? validateStudentId(trimmedNewId) : null);
@@ -63,6 +70,26 @@
     }
   }
 
+  async function updateRole(u: PublicUser, nextRole: UserRole) {
+    if (u.role === nextRole) return;
+    roleBusyId = u.member_id;
+    try {
+      const r = await apiFetch<{ users: PublicUser[] }>(
+        'PATCH',
+        `/api/admin/users/${encodeURIComponent(u.member_id)}/role`,
+        { role: nextRole }
+      );
+      users = r.users;
+      note = `Updated ${u.member_id} to ${nextRole === 'admin' ? 'Admin' : 'Normal user'}.`;
+      noteErr = false;
+    } catch (e) {
+      note = (e as Error).message;
+      noteErr = true;
+    } finally {
+      roleBusyId = null;
+    }
+  }
+
   async function resetUser(u: PublicUser) {
     if (!confirm(`Reset the password of ${u.member_id}? They will create a new one at next sign-in.`)) return;
     try {
@@ -102,7 +129,7 @@
       <p class="eyebrow">MANAGE <span class="heading-dot">&middot;</span> USERS</p>
       <h1>Users</h1>
       <p class="subheading">
-        Admins can add and remove accounts. New users create their own password via Sign up.
+        Admins can add accounts, update user roles, and remove users. New users create their own password via Sign up.
       </p>
     </div>
   </div>
@@ -126,10 +153,15 @@
       </div>
       <div>
         <label for="newRole">Permission</label>
-        <select id="newRole" bind:value={newRole}>
-          <option value="user">Normal user</option>
-          <option value="admin">Admin</option>
-        </select>
+        <SelectMenu
+          id="newRole"
+          ariaLabel="Permission"
+          bind:value={newRole}
+          options={ROLE_OPTIONS}
+          align="left"
+          size="md"
+          fullWidth
+        />
       </div>
       <button class="btn primary" type="submit" disabled={busy}>Add user</button>
     </form>
@@ -164,9 +196,16 @@
               <td class="budget-cell">{u.member_id}</td>
               <td>{u.full_name}{self ? ' (you)' : ''}</td>
               <td>
-                <span class="badge" class:admin={u.role === 'admin'}>
-                  {u.role === 'admin' ? 'Admin' : 'Normal user'}
-                </span>
+                <SelectMenu
+                  ariaLabel={`Role for ${u.full_name}`}
+                  value={u.role}
+                  options={ROLE_OPTIONS}
+                  align="left"
+                  size="sm"
+                  floating
+                  disabled={self || roleBusyId === u.member_id}
+                  onchange={(val) => updateRole(u, val as UserRole)}
+                />
               </td>
               <td>
                 <span class={`badge ${u.has_password ? 'ok' : 'wait'}`}>

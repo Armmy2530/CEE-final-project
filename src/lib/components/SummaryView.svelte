@@ -2,7 +2,14 @@
   import { buildMonthGrid, DOW_LABELS, getMonthTitle, shiftMonthStr } from '$lib/calendar';
   import { addDayStr, baht, getDisplayStatus, type DisplayStatus } from '$lib/format';
   import type { DashboardPayload, ProjectSummary } from '$lib/types';
+  import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
   import type { PageId } from './Topbar.svelte';
+
+  const YEAR_OPTIONS: SelectOption[] = [
+    { value: 'all', label: 'Academic year 2026' },
+    { value: '2026', label: '2026 events only' },
+    { value: '2027', label: '2027 events only' }
+  ];
 
   let {
     dash,
@@ -289,17 +296,15 @@
     </div>
 
     <div class="ac-head-controls">
-      <label class="ac-year-pill" aria-label="Filter by academic year">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-          <rect x="3" y="5" width="18" height="16" rx="2" />
-          <path d="M16 3v4M8 3v4M3 10h18" stroke-linecap="round" />
-        </svg>
-        <select bind:value={yearFilter}>
-          <option value="all">Academic year 2026</option>
-          <option value="2026">2026 events only</option>
-          <option value="2027">2027 events only</option>
-        </select>
-      </label>
+      <SelectMenu
+        id="summaryYearFilter"
+        ariaLabel="Filter by academic year"
+        leadingIcon="calendar"
+        size="md"
+        align="right"
+        bind:value={yearFilter}
+        options={YEAR_OPTIONS}
+      />
 
       {#if isAdmin && dash?.meta?.source === 'mock' && onOpenSheetPicker}
         <button type="button" class="ac-outline-btn" onclick={onOpenSheetPicker}>

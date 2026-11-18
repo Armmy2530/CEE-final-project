@@ -52,6 +52,7 @@ import * as sheetsExportCsvRoute from '../src/routes/api/sheets/export-csv/+serv
 import * as adminUsersRoute from '../src/routes/api/admin/users/+server';
 import * as adminUserIdRoute from '../src/routes/api/admin/users/[id]/+server';
 import * as adminUserResetRoute from '../src/routes/api/admin/users/[id]/reset/+server';
+import * as adminUserRoleRoute from '../src/routes/api/admin/users/[id]/role/+server';
 
 // ---- alert engine ----
 const ev = (o: Partial<Parameters<typeof buildAlerts>[0]['events'][number]> = {}) => ({
@@ -534,7 +535,8 @@ function createHarness(
     { pattern: /^\/api\/sheets\/export-csv$/, handlers: sheetsExportCsvRoute as never },
     { pattern: /^\/api\/admin\/users$/, handlers: adminUsersRoute as never },
     { pattern: /^\/api\/admin\/users\/([^/]+)$/, handlers: adminUserIdRoute as never, paramNames: ['id'] },
-    { pattern: /^\/api\/admin\/users\/([^/]+)\/reset$/, handlers: adminUserResetRoute as never, paramNames: ['id'] }
+    { pattern: /^\/api\/admin\/users\/([^/]+)\/reset$/, handlers: adminUserResetRoute as never, paramNames: ['id'] },
+    { pattern: /^\/api\/admin\/users\/([^/]+)\/role$/, handlers: adminUserRoleRoute as never, paramNames: ['id'] }
   ];
 
   async function call(
@@ -794,6 +796,40 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       const u = await call('POST', '/api/auth/setup', { member_id: '6600009999', password: 'UserPass99' });
       expect((await call('GET', '/api/admin/users', undefined, u.cookie)).status).toBe(403);
       expect((await call('DELETE', '/api/admin/users/6600000001', undefined, u.cookie)).status).toBe(403);
+      expect(
+        (await call('PATCH', '/api/admin/users/6600000001/role', { role: 'user' }, u.cookie)).status
+      ).toBe(403);
+
+      // Admin can change roles of other users (promote/demote) and guards invalid/self/unknown cases
+      expect(
+        (await call('PATCH', '/api/admin/users/6600000001/role', { role: 'user' }, login.cookie)).status
+      ).toBe(400);
+      expect(
+        (await call('PATCH', '/api/admin/users/6600009999/role', { role: 'superadmin' }, login.cookie)).status
+      ).toBe(400);
+      expect(
+        (await call('PATCH', '/api/admin/users/6699999999/role', { role: 'admin' }, login.cookie)).status
+      ).toBe(404);
+
+      const promoted = await call(
+        'PATCH',
+        '/api/admin/users/6600009999/role',
+        { role: 'admin' },
+        login.cookie
+      );
+      expect(promoted.status).toBe(200);
+      expect(promoted.body.users.find((x: { member_id: string }) => x.member_id === '6600009999')?.role).toBe('admin');
+      expect((await call('GET', '/api/me', undefined, u.cookie)).body.user.role).toBe('admin');
+
+      const demoted = await call(
+        'PATCH',
+        '/api/admin/users/6600009999/role',
+        { role: 'user' },
+        login.cookie
+      );
+      expect(demoted.status).toBe(200);
+      expect(demoted.body.users.find((x: { member_id: string }) => x.member_id === '6600009999')?.role).toBe('user');
+      expect((await call('GET', '/api/me', undefined, u.cookie)).body.user.role).toBe('user');
 
       // Admin cannot delete self / last admin; can reset and delete others
       expect((await call('DELETE', '/api/admin/users/6600000001', undefined, login.cookie)).status).toBe(400);

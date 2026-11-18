@@ -115,6 +115,7 @@ export function openDb(file: string) {
     promoteAdmin: db.prepare("UPDATE users SET role = 'admin' WHERE LOWER(member_id) = LOWER(?)"),
     firstUser: db.prepare('SELECT member_id FROM users ORDER BY created_at ASC, member_id ASC LIMIT 1'),
     setPw: db.prepare('UPDATE users SET pw_hash = ?, pw_salt = ? WHERE member_id = ?'),
+    setRole: db.prepare('UPDATE users SET role = ? WHERE member_id = ?'),
     setTheme: db.prepare('UPDATE users SET theme = ? WHERE member_id = ?'),
     del: db.prepare('DELETE FROM users WHERE member_id = ?'),
     admins: db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"),
@@ -196,6 +197,16 @@ export function openDb(file: string) {
     },
     createUser(member_id: string, full_name: string, role: UserRole) {
       q.insert.run(normalizeMemberId(member_id), full_name, role, Date.now());
+    },
+    setRole(id: string, role: UserRole): 'not_found' | 'last_admin' | 'ok' {
+      const u = q.get.get(id.trim()) as DbUserRow | undefined;
+      if (!u) return 'not_found';
+      if (u.role === role) return 'ok';
+      if (u.role === 'admin' && role !== 'admin' && (q.admins.get() as { n: number }).n <= 1) {
+        return 'last_admin';
+      }
+      q.setRole.run(role, u.member_id);
+      return 'ok';
     },
     deleteUser(id: string): 'not_found' | 'last_admin' | 'ok' {
       const u = q.get.get(id.trim()) as DbUserRow | undefined;
@@ -310,6 +321,9 @@ export function createSqliteStore(rawDb: AppDb): AppStore {
     },
     async createUser(member_id, full_name, role) {
       rawDb.createUser(member_id, full_name, role);
+    },
+    async setRole(id, role) {
+      return rawDb.setRole(id, role);
     },
     async deleteUser(id) {
       return rawDb.deleteUser(id);

@@ -155,6 +155,9 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     async createUser(member_id, full_name, role) {
       return (await initStore()).createUser(member_id, full_name, role);
     },
+    async setRole(id, role) {
+      return (await initStore()).setRole(id, role);
+    },
     async deleteUser(id) {
       return (await initStore()).deleteUser(id);
     },
