@@ -349,7 +349,11 @@
   }
 </script>
 
-<section id="calendar" class="page-content" class:cal-compact={compact}>
+<section
+  id={standalone ? 'calendar' : undefined}
+  class={standalone ? 'page-content' : 'ac-summary-cal'}
+  class:cal-compact={compact}
+>
   {#if standalone && !compact}
     <div class="page-heading">
       <div>

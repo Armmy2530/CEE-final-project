@@ -6736,10 +6736,20 @@ body {
   height: 13px;
 }
 
+.ac-summary-cal {
+  width: 100%;
+  min-width: 0;
+}
+
 .ac-upcoming-list {
   margin-top: 12px;
   display: grid;
   gap: 10px;
+}
+
+.ac-upcoming-list.is-wide {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px 12px;
 }
 
 .ac-upcoming-row {
@@ -6753,10 +6763,22 @@ body {
   gap: 12px;
   cursor: pointer;
   text-align: left;
+  min-width: 0;
+}
+
+.ac-upcoming-list.is-wide .ac-upcoming-row {
+  border: 1px solid var(--ac-border);
+  background: var(--ac-cream-soft);
+  padding: 10px 12px;
 }
 
 .ac-upcoming-row:hover {
   background: var(--ac-cream-soft);
+}
+
+.ac-upcoming-list.is-wide .ac-upcoming-row:hover {
+  background: var(--ac-cream);
+  border-color: var(--ac-border-strong);
 }
 
 .ac-up-tile {

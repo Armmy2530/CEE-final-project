@@ -512,6 +512,7 @@
           {refreshing}
           firstName={user.full_name.split(' ')[0]}
           {isAdmin}
+          theme={themeCtx.value}
           onRefresh={() => loadDashboard(true, false)}
           onOpenProject={openProject}
           onSelectPage={selectPage}

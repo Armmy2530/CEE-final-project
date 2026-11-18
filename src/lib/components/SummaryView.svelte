@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { buildMonthGrid, DOW_LABELS, getMonthTitle, shiftMonthStr } from '$lib/calendar';
   import { addDayStr, baht, getDisplayStatus, type DisplayStatus } from '$lib/format';
-  import type { DashboardPayload, ProjectSummary } from '$lib/types';
+  import type { DashboardPayload, ProjectSummary, ThemeMode } from '$lib/types';
+  import Calendar from './Calendar.svelte';
   import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
   import type { PageId } from './Topbar.svelte';
 
@@ -17,6 +17,7 @@
     refreshing,
     firstName = 'Member',
     isAdmin = false,
+    theme = 'light',
     onRefresh,
     onOpenProject,
     onSelectPage,
@@ -27,23 +28,17 @@
     refreshing: boolean;
     firstName?: string;
     isAdmin?: boolean;
+    theme?: ThemeMode;
     onRefresh: () => void;
     onOpenProject: (eventId: string) => void;
-    onSelectPage: (page: PageId) => void;
+    onSelectPage?: (page: PageId) => void;
     onOpenSheetPicker?: () => void;
   } = $props();
 
   let yearFilter = $state<'all' | '2026' | '2027'>('all');
-  let calMonth = $state('');
   let hoveredBudgetIdx = $state<number | null>(null);
 
   const today = $derived(dash?.today || '2026-11-18');
-
-  $effect(() => {
-    if (!calMonth && today) {
-      calMonth = today.slice(0, 7);
-    }
-  });
 
   const lastUpdatedText = $derived.by(() => {
     const ts = dash?.meta?.fetchedAt;
@@ -160,45 +155,6 @@
 
   const topParticipantMax = $derived.by(() => {
     return Math.max(1, ...topParticipantEvents.map((e) => participantCount(e)));
-  });
-
-  interface CalMilestone {
-    key: string;
-    event: ProjectSummary;
-    label: string;
-    status: DisplayStatus;
-  }
-
-  const milestonesByDate = $derived.by(() => {
-    const map: Record<string, CalMilestone[]> = {};
-    for (const ev of scopedEvents) {
-      const status = getDisplayStatus(ev, today);
-      if (ev.date) {
-        if (!map[ev.date]) map[ev.date] = [];
-        map[ev.date].push({
-          key: `${ev.event_id}-start`,
-          event: ev,
-          label: `${ev.event_id} starts`,
-          status
-        });
-      }
-      if (ev.end_date && ev.end_date !== ev.date) {
-        if (!map[ev.end_date]) map[ev.end_date] = [];
-        map[ev.end_date].push({
-          key: `${ev.event_id}-end`,
-          event: ev,
-          label: `${ev.event_id} ends`,
-          status
-        });
-      }
-    }
-    return map;
-  });
-
-  const monthCells = $derived.by(() => {
-    if (!calMonth) return [];
-    const emptyMap = {};
-    return buildMonthGrid(calMonth, today, null, emptyMap);
   });
 
   interface UpcomingMilestone {
@@ -483,114 +439,43 @@
     </article>
   </div>
 
-  <!-- Bottom Schedule Row -->
-  <div class="ac-bot-grid">
-    <article class="ac-card ac-cal-card">
-      <div class="ac-card-head ac-cal-card-head">
-        <div class="ac-cal-title-nav">
-          <h2>Events calendar</h2>
-          <div class="ac-month-stepper">
-            <button
-              type="button"
-              aria-label="Previous month"
-              onclick={() => (calMonth = shiftMonthStr(calMonth, -1))}
-            >
-              &#8249;
-            </button>
-            <span>{getMonthTitle(calMonth)}</span>
-            <button
-              type="button"
-              aria-label="Next month"
-              onclick={() => (calMonth = shiftMonthStr(calMonth, 1))}
-            >
-              &#8250;
-            </button>
-          </div>
-        </div>
+  <!-- Events Calendar (shared with Calendar page) -->
+  <Calendar events={scopedEvents} {today} {theme} standalone={false} {onOpenProject} />
 
-        <div class="ac-cal-status-legend">
-          <span><i class="ac-dot done"></i>Done</span>
-          <span><i class="ac-dot processing"></i>Processing</span>
-          <span><i class="ac-dot waiting"></i>Waiting</span>
-        </div>
+  <!-- Upcoming Events Row -->
+  <article class="ac-card ac-upcoming-card">
+    <div class="ac-card-head">
+      <div>
+        <h2>Upcoming events</h2>
+        <p class="ac-card-sub">next 30 days</p>
       </div>
+    </div>
 
-      <div class="ac-mini-cal-scroll">
-        <div class="ac-mini-cal">
-          <div class="ac-mini-cal-dow">
-            {#each DOW_LABELS as d}
-              <span>{d}</span>
-            {/each}
-          </div>
-          <div class="ac-mini-cal-grid">
-            {#each monthCells as cell (cell.key)}
-              {@const milestones = milestonesByDate[cell.key] ?? []}
-              <div class="ac-mini-cell" class:other={cell.other} class:today={cell.today}>
-                <span class="ac-mini-day" class:is-today={cell.today}>{cell.dayNum}</span>
-                {#if milestones.length}
-                  <div class="ac-mini-pills">
-                    {#each milestones.slice(0, 2) as m (m.key)}
-                      <button
-                        type="button"
-                        class={`ac-cal-pill ${statusTone(m.status)}`}
-                        title={`${m.event.title} (${m.label})`}
-                        onclick={() => onOpenProject(m.event.event_id)}
-                      >
-                        {m.label}
-                      </button>
-                    {/each}
-                    {#if milestones.length > 2}
-                      <button
-                        type="button"
-                        class="ac-cal-more"
-                        onclick={() => onSelectPage('calendar')}
-                      >
-                        +{milestones.length - 2} more
-                      </button>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        </div>
-      </div>
-    </article>
-
-    <article class="ac-card ac-upcoming-card">
-      <div class="ac-card-head">
-        <div>
-          <h2>Upcoming events</h2>
-          <p class="ac-card-sub">next 30 days</p>
-        </div>
-      </div>
-
-      <div class="ac-upcoming-list">
-        {#if !upcomingList.length}
-          <p class="muted" style="padding:18px 0">No upcoming activities in the next 30 days.</p>
-        {:else}
-          {#each upcomingList as item (item.event.event_id + item.kind)}
-            {@const tile = dateTile(item.targetDate)}
-            <button
-              type="button"
-              class="ac-upcoming-row"
-              onclick={() => onOpenProject(item.event.event_id)}
-            >
-              <div class="ac-up-tile">
-                <small>{tile.month}</small>
-                <b>{tile.day}</b>
-              </div>
-              <div class="ac-up-info">
-                <strong>{item.event.event_id} {item.event.title}</strong>
-                <span>
-                  {milestonePhrase(item)}
-                  <em class={`ac-up-st ${statusTone(item.status)}`}>{item.status}</em>
-                </span>
-              </div>
-            </button>
-          {/each}
-        {/if}
-      </div>
-    </article>
-  </div>
+    <div class="ac-upcoming-list is-wide">
+      {#if !upcomingList.length}
+        <p class="muted" style="padding:18px 0">No upcoming activities in the next 30 days.</p>
+      {:else}
+        {#each upcomingList as item (item.event.event_id + item.kind)}
+          {@const tile = dateTile(item.targetDate)}
+          <button
+            type="button"
+            class="ac-upcoming-row"
+            onclick={() => onOpenProject(item.event.event_id)}
+          >
+            <div class="ac-up-tile">
+              <small>{tile.month}</small>
+              <b>{tile.day}</b>
+            </div>
+            <div class="ac-up-info">
+              <strong>{item.event.event_id} {item.event.title}</strong>
+              <span>
+                {milestonePhrase(item)}
+                <em class={`ac-up-st ${statusTone(item.status)}`}>{item.status}</em>
+              </span>
+            </div>
+          </button>
+        {/each}
+      {/if}
+    </div>
+  </article>
 </section>
