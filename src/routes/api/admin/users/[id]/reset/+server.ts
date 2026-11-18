@@ -6,8 +6,8 @@ export const POST: RequestHandler = async ({ locals, params }) => {
   if (locals.user.role !== 'admin') return jsonFail(403, 'Admins only');
 
   const id = decodeURIComponent(params.id);
-  if (!locals.runtime.db.getUser(id)) return jsonFail(404, 'User not found.');
+  if (!(await locals.runtime.db.getUser(id))) return jsonFail(404, 'User not found.');
 
-  locals.runtime.db.resetPassword(id);
-  return jsonOk({ users: locals.runtime.db.listUsers() });
+  await locals.runtime.db.resetPassword(id);
+  return jsonOk({ users: await locals.runtime.db.listUsers() });
 };

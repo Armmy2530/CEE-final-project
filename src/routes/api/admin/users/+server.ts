@@ -6,7 +6,7 @@ import { validateStudentId } from '$lib/server/runtime';
 export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) return jsonFail(401, 'Not signed in');
   if (locals.user.role !== 'admin') return jsonFail(403, 'Admins only');
-  return jsonOk({ users: locals.runtime.db.listUsers() });
+  return jsonOk({ users: await locals.runtime.db.listUsers() });
 };
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -29,8 +29,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   if (idErr) return jsonFail(400, idErr);
   if (!name || name.length > 80) return jsonFail(400, 'Name is required (max 80 characters).');
   if (role !== 'admin' && role !== 'user') return jsonFail(400, 'Role must be admin or user.');
-  if (locals.runtime.db.getUser(id)) return jsonFail(409, 'This ID already exists.');
+  if (await locals.runtime.db.getUser(id)) return jsonFail(409, 'This ID already exists.');
 
-  locals.runtime.db.createUser(id, name, role);
-  return jsonOk({ users: locals.runtime.db.listUsers() }, 201);
+  await locals.runtime.db.createUser(id, name, role);
+  return jsonOk({ users: await locals.runtime.db.listUsers() }, 201);
 };

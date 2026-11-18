@@ -16,7 +16,7 @@ export const PATCH: RequestHandler = async (event) => {
     return jsonFail(400, 'Theme must be light or dark.');
   }
 
-  event.locals.runtime.db.setTheme(event.locals.user.member_id, body.theme);
+  await event.locals.runtime.db.setTheme(event.locals.user.member_id, body.theme);
   event.cookies.set('theme', body.theme, {
     httpOnly: false,
     sameSite: 'lax',

@@ -114,32 +114,27 @@ export const POST: RequestHandler = async (event) => {
     }
 
     const memberId = event.locals.user.member_id;
-    const prevEmail = (rt.db.getSetting(`user_google_email:${memberId}`) || '').trim().toLowerCase();
+    const prevEmail = ((await rt.db.getSetting(`user_google_email:${memberId}`)) || '')
+      .trim()
+      .toLowerCase();
     if (prevEmail && prevEmail !== emailLower) {
-      rt.db.deleteSetting(`google_user_map:${prevEmail}`);
-      await rt.deleteSettingFromSupabase(`google_user_map:${prevEmail}`);
+      await rt.db.deleteSetting(`google_user_map:${prevEmail}`);
     }
 
-    const prevMember = (rt.db.getSetting(`google_user_map:${emailLower}`) || '').trim();
+    const prevMember = ((await rt.db.getSetting(`google_user_map:${emailLower}`)) || '').trim();
     if (prevMember && prevMember !== memberId) {
-      rt.db.deleteSetting(`user_google_email:${prevMember}`);
-      await rt.deleteSettingFromSupabase(`user_google_email:${prevMember}`);
+      await rt.db.deleteSetting(`user_google_email:${prevMember}`);
     }
 
-    rt.db.setSetting(`google_user_map:${emailLower}`, memberId, now);
-    await rt.saveSettingToSupabase(`google_user_map:${emailLower}`, memberId, now);
-    rt.db.setSetting(`user_google_email:${memberId}`, emailLower, now);
-    await rt.saveSettingToSupabase(`user_google_email:${memberId}`, emailLower, now);
+    await rt.db.setSetting(`google_user_map:${emailLower}`, memberId, now);
+    await rt.db.setSetting(`user_google_email:${memberId}`, emailLower, now);
 
     const isAdmin = event.locals.user.role === 'admin';
     if (providerToken && isAdmin) {
-      rt.db.setSetting('google_provider_token', providerToken, now);
-      await rt.saveSettingToSupabase('google_provider_token', providerToken, now);
-      rt.db.setSetting('google_connected_email', emailLower, now);
-      await rt.saveSettingToSupabase('google_connected_email', emailLower, now);
+      await rt.db.setSetting('google_provider_token', providerToken, now);
+      await rt.db.setSetting('google_connected_email', emailLower, now);
     }
 
-    await rt.flushSync();
     const updatedUser: SessionUser = {
       ...event.locals.user,
       linkedGoogleEmail: emailLower
@@ -153,7 +148,7 @@ export const POST: RequestHandler = async (event) => {
 
   // Signed-out user attempting Google Sign-In: MUST match an existing linked club account
   const mappedMemberId = emailLower
-    ? (rt.db.getSetting(`google_user_map:${emailLower}`) || '').trim()
+    ? ((await rt.db.getSetting(`google_user_map:${emailLower}`)) || '').trim()
     : '';
   const userRow = mappedMemberId ? await rt.resolveUser(mappedMemberId) : null;
 
@@ -164,21 +159,17 @@ export const POST: RequestHandler = async (event) => {
     );
   }
 
-  if (emailLower && rt.getLinkedGoogleEmail(userRow.member_id) !== emailLower) {
-    rt.db.setSetting(`user_google_email:${userRow.member_id}`, emailLower, now);
-    await rt.saveSettingToSupabase(`user_google_email:${userRow.member_id}`, emailLower, now);
+  if (emailLower && (await rt.getLinkedGoogleEmail(userRow.member_id)) !== emailLower) {
+    await rt.db.setSetting(`user_google_email:${userRow.member_id}`, emailLower, now);
   }
 
   const isAdmin = userRow.role === 'admin';
   if (providerToken && isAdmin) {
-    rt.db.setSetting('google_provider_token', providerToken, now);
-    await rt.saveSettingToSupabase('google_provider_token', providerToken, now);
-    rt.db.setSetting('google_connected_email', emailLower, now);
-    await rt.saveSettingToSupabase('google_connected_email', emailLower, now);
+    await rt.db.setSetting('google_provider_token', providerToken, now);
+    await rt.db.setSetting('google_connected_email', emailLower, now);
   }
 
-  const sessionToken = rt.db.createSession(userRow.member_id);
-  await rt.flushSync();
+  const sessionToken = await rt.db.createSession(userRow.member_id);
   setSessionCookie(event, sessionToken);
 
   const sessionUser: SessionUser = {
@@ -186,7 +177,7 @@ export const POST: RequestHandler = async (event) => {
     full_name: userRow.full_name,
     role: userRow.role,
     theme: userRow.theme,
-    linkedGoogleEmail: emailLower || rt.getLinkedGoogleEmail(userRow.member_id)
+    linkedGoogleEmail: emailLower || (await rt.getLinkedGoogleEmail(userRow.member_id))
   };
 
   return jsonOk({
@@ -202,24 +193,21 @@ export const DELETE: RequestHandler = async (event) => {
   await rt.ensureSeeded();
 
   const memberId = event.locals.user.member_id;
-  const linkedEmail = (rt.db.getSetting(`user_google_email:${memberId}`) || '').trim().toLowerCase();
+  const linkedEmail = ((await rt.db.getSetting(`user_google_email:${memberId}`)) || '')
+    .trim()
+    .toLowerCase();
 
-  rt.db.deleteSetting(`user_google_email:${memberId}`);
-  await rt.deleteSettingFromSupabase(`user_google_email:${memberId}`);
+  await rt.db.deleteSetting(`user_google_email:${memberId}`);
 
   if (linkedEmail) {
-    rt.db.deleteSetting(`google_user_map:${linkedEmail}`);
-    await rt.deleteSettingFromSupabase(`google_user_map:${linkedEmail}`);
+    await rt.db.deleteSetting(`google_user_map:${linkedEmail}`);
   }
 
-  for (const s of rt.db.listSettings()) {
+  for (const s of await rt.db.listSettings()) {
     if (s.key.startsWith('google_user_map:') && s.value.trim().toLowerCase() === memberId.toLowerCase()) {
-      rt.db.deleteSetting(s.key);
-      await rt.deleteSettingFromSupabase(s.key);
+      await rt.db.deleteSetting(s.key);
     }
   }
-
-  await rt.flushSync();
 
   const updatedUser: SessionUser = {
     ...event.locals.user,

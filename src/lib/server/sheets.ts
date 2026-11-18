@@ -343,7 +343,7 @@ export interface SourceOptions {
   env?: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
   now?: () => number;
-  getAccessToken?: () => string | null;
+  getAccessToken?: () => string | null | Promise<string | null>;
 }
 
 export function createSource({
@@ -379,8 +379,13 @@ export function createSource({
     inflight = null;
   }
 
+  async function readOAuthToken(): Promise<string> {
+    if (!getAccessToken) return '';
+    return ((await getAccessToken()) || '').trim();
+  }
+
   async function fetchGoogleBatch(sheetId: string, allowOAuth = true): Promise<SheetData> {
-    const oauthToken = allowOAuth ? (getAccessToken?.() || '').trim() : '';
+    const oauthToken = allowOAuth ? await readOAuthToken() : '';
     const params = TABS.map((t) => `ranges=${encodeURIComponent(t)}`).join('&');
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}/values:batchGet?${params}${key && !oauthToken ? `&key=${encodeURIComponent(key)}` : ''}`;
     const res = await fetchImpl(url, {
@@ -421,7 +426,7 @@ export function createSource({
   }
 
   async function fetchGoogleForId(sheetId: string): Promise<SheetData> {
-    const oauthToken = (getAccessToken?.() || '').trim();
+    const oauthToken = await readOAuthToken();
     if (oauthToken) {
       try {
         return await fetchGoogleBatch(sheetId, true);

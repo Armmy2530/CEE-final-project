@@ -2,16 +2,15 @@ import path from 'node:path';
 import { buildDashboard, type DashboardPayload } from './dashboard';
 import { todayInTz } from './dates';
 import {
-  hashSessionToken,
   openDb,
   type AppDb,
   type DbUserRow,
-  type SessionUser,
-  type ThemeMode,
-  type UserRole
+  type SessionUser
 } from './db';
-import { createSource, type SheetConfig } from './sheets';
-import { createSupabaseClient, type SupabaseClient } from './supabase';
+import { createSqliteStore } from './db';
+import { createSource, type MemberRecord, type SheetConfig } from './sheets';
+import { StoreUnavailableError, type AppStore } from './store';
+import { createSupabaseClient, createSupabaseStore, type SupabaseClient } from './supabase';
 import type { DbBackend, SupabaseStatus } from '../types';
 import {
   STUDENT_ID_RE,
@@ -22,6 +21,7 @@ import {
 
 export const ID_RE = STUDENT_ID_RE;
 export { STUDENT_ID_RE, validPassword, validatePassword, validateStudentId };
+export { StoreUnavailableError, type AppStore };
 
 export function createLimiter(max: number, windowMs: number) {
   const hits = new Map<string, { n: number; reset: number }>();
@@ -53,12 +53,7 @@ export interface RuntimeOptions {
 }
 
 export function createRuntime({ env = process.env, db, source, supabase }: RuntimeOptions = {}) {
-  const rawDb = db || openDb(env.DB_PATH || path.join(process.cwd(), 'data', 'app.db'));
-  const sheetSource = (source ||
-    createSource({
-      env,
-      getAccessToken: () => rawDb.getSetting('google_provider_token')
-    })) as ReturnType<typeof createSource>;
+  let rawDb: AppDb | null = db || null;
   const tz = env.TZ_NAME || 'Asia/Bangkok';
   const loginLimit = createLimiter(8, 15 * 60 * 1000);
   const chatLimit = createLimiter(20, 60 * 1000);
@@ -68,7 +63,7 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     (Boolean(env.SUPABASE_URL) &&
       Boolean(env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_PUBLISHABLE_KEY) &&
       env.DB_PATH !== ':memory:' &&
-      !rawDb.isMemory);
+      !db?.isMemory);
 
   const supa: SupabaseClient =
     supabase ||
@@ -76,123 +71,163 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
       env: shouldEnableSupabase ? env : {}
     });
 
-  // Restore saved sheet_config from local SQLite on startup if present
-  try {
-    const savedSheet = rawDb.getSetting('sheet_config');
-    if (savedSheet && typeof sheetSource.setConfig === 'function') {
-      const parsed = JSON.parse(savedSheet) as Partial<SheetConfig>;
-      if (parsed && (parsed.mode === 'mock' || parsed.mode === 'google')) {
-        sheetSource.setConfig({
-          mode: parsed.mode,
-          sheetId: String(parsed.sheetId || ''),
-          sheetTitle: parsed.sheetTitle ? String(parsed.sheetTitle) : undefined
-        });
+  let activeStore: AppStore | null = null;
+  let initPromise: Promise<AppStore> | null = null;
+  let sheetConfigRestored = false;
+  let closed = false;
+
+  function getOrOpenSqlite(): AppDb {
+    if (!rawDb) {
+      rawDb = openDb(env.DB_PATH || path.join(process.cwd(), 'data', 'app.db'));
+    }
+    return rawDb;
+  }
+
+  let sheetSource: ReturnType<typeof createSource>;
+
+  async function restoreSheetConfig(store: AppStore) {
+    if (sheetConfigRestored) return;
+    try {
+      const savedSheet = await store.getSetting('sheet_config');
+      sheetConfigRestored = true;
+      if (savedSheet && typeof sheetSource.setConfig === 'function') {
+        const parsed = JSON.parse(savedSheet) as Partial<SheetConfig>;
+        if (parsed && (parsed.mode === 'mock' || parsed.mode === 'google')) {
+          sheetSource.setConfig({
+            mode: parsed.mode,
+            sheetId: String(parsed.sheetId || ''),
+            sheetTitle: parsed.sheetTitle ? String(parsed.sheetTitle) : undefined
+          });
+        }
+      }
+    } catch (e) {
+      if (e instanceof StoreUnavailableError) throw e;
+      sheetConfigRestored = true;
+    }
+  }
+
+  async function initStore(): Promise<AppStore> {
+    if (activeStore) return activeStore;
+    if (initPromise) return initPromise;
+    initPromise = (async () => {
+      let store: AppStore;
+      if (supa.isEnabled()) {
+        const status = await supa.probe();
+        if (status === 'connected') {
+          store = createSupabaseStore(supa);
+        } else {
+          store = createSqliteStore(getOrOpenSqlite());
+        }
+      } else {
+        store = createSqliteStore(getOrOpenSqlite());
+      }
+      activeStore = store;
+      await restoreSheetConfig(store);
+      return store;
+    })().finally(() => {
+      initPromise = null;
+    });
+    return initPromise;
+  }
+
+  const database: AppStore = {
+    get backend(): DbBackend {
+      return getDbBackend();
+    },
+    get isMemory(): boolean {
+      return activeStore ? activeStore.isMemory : Boolean(rawDb?.isMemory);
+    },
+    async seedFromMembers(members) {
+      return (await initStore()).seedFromMembers(members);
+    },
+    async getUser(id) {
+      return (await initStore()).getUser(id);
+    },
+    async listUsers() {
+      return (await initStore()).listUsers();
+    },
+    async listAllUserRows() {
+      return (await initStore()).listAllUserRows();
+    },
+    async upsertUserFromRemote(u) {
+      return (await initStore()).upsertUserFromRemote(u);
+    },
+    async createUser(member_id, full_name, role) {
+      return (await initStore()).createUser(member_id, full_name, role);
+    },
+    async deleteUser(id) {
+      return (await initStore()).deleteUser(id);
+    },
+    async setPassword(id, password) {
+      return (await initStore()).setPassword(id, password);
+    },
+    async resetPassword(id) {
+      return (await initStore()).resetPassword(id);
+    },
+    async setTheme(id, theme) {
+      return (await initStore()).setTheme(id, theme);
+    },
+    async verifyPassword(id, password) {
+      return (await initStore()).verifyPassword(id, password);
+    },
+    async createSession(member_id) {
+      return (await initStore()).createSession(member_id);
+    },
+    async getSession(token) {
+      return (await initStore()).getSession(token);
+    },
+    async deleteSession(token) {
+      return (await initStore()).deleteSession(token);
+    },
+    async reassignSessions(fromMemberId, toMemberId) {
+      return (await initStore()).reassignSessions(fromMemberId, toMemberId);
+    },
+    async getLinkedGoogleEmail(memberId) {
+      return (await initStore()).getLinkedGoogleEmail(memberId);
+    },
+    async getSetting(key) {
+      return (await initStore()).getSetting(key);
+    },
+    async getSettingRow(key) {
+      return (await initStore()).getSettingRow(key);
+    },
+    async setSetting(key, value, updatedAt) {
+      return (await initStore()).setSetting(key, value, updatedAt);
+    },
+    async deleteSetting(key) {
+      return (await initStore()).deleteSetting(key);
+    },
+    async listSettings() {
+      return (await initStore()).listSettings();
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      if (activeStore) {
+        activeStore.close();
+      } else {
+        rawDb?.close();
       }
     }
-  } catch {
-    // ignore malformed saved sheet_config
-  }
+  };
 
-  const pendingSyncs = new Set<Promise<unknown>>();
-  function trackSync(p: Promise<unknown>) {
-    pendingSyncs.add(p);
-    p.finally(() => pendingSyncs.delete(p));
-  }
-
-  function isSupaConnected(): boolean {
-    return supa.isEnabled() && supa.getStatus() === 'connected';
-  }
+  sheetSource = (source ||
+    createSource({
+      env,
+      getAccessToken: () => database.getSetting('google_provider_token')
+    })) as ReturnType<typeof createSource>;
 
   function getSupabaseStatus(): SupabaseStatus {
     return supa.getStatus();
   }
 
   function getDbBackend(): DbBackend {
-    return isSupaConnected() ? 'supabase' : 'sqlite';
+    if (activeStore) return activeStore.backend;
+    return supa.isEnabled() && supa.getStatus() === 'connected' ? 'supabase' : 'sqlite';
   }
-
-  const database: AppDb = {
-    ...rawDb,
-    createUser(member_id: string, full_name: string, role: UserRole) {
-      rawDb.createUser(member_id, full_name, role);
-      const row = rawDb.getUser(member_id);
-      if (row && isSupaConnected()) {
-        trackSync(supa.upsertUsers([row], false));
-      }
-    },
-    deleteUser(id: string) {
-      const target = rawDb.getUser(id);
-      const res = rawDb.deleteUser(id);
-      if (res === 'ok' && target && isSupaConnected()) {
-        trackSync(supa.deleteUser(target.member_id));
-      }
-      return res;
-    },
-    async setPassword(id: string, password: string) {
-      await rawDb.setPassword(id, password);
-      const row = rawDb.getUser(id);
-      if (row && isSupaConnected()) {
-        await supa.upsertUsers([row], false);
-        await supa.deleteUserSessions(row.member_id);
-      }
-    },
-    resetPassword(id: string) {
-      rawDb.resetPassword(id);
-      const row = rawDb.getUser(id);
-      if (row && isSupaConnected()) {
-        trackSync(
-          (async () => {
-            await supa.upsertUsers([row], false);
-            await supa.deleteUserSessions(row.member_id);
-          })()
-        );
-      }
-    },
-    setTheme(id: string, theme: ThemeMode) {
-      rawDb.setTheme(id, theme);
-      const row = rawDb.getUser(id);
-      if (row && isSupaConnected()) {
-        trackSync(supa.upsertUsers([row], false));
-      }
-    },
-    createSession(member_id: string): string {
-      const token = rawDb.createSession(member_id);
-      if (isSupaConnected()) {
-        const now = Date.now();
-        trackSync(
-          supa.upsertSession({
-            token_hash: hashSessionToken(token),
-            member_id,
-            created_at: now,
-            expires_at: now + rawDb.SESSION_MS
-          })
-        );
-      }
-      return token;
-    },
-    deleteSession(token: string | undefined | null) {
-      rawDb.deleteSession(token);
-      if (token && isSupaConnected()) {
-        trackSync(supa.deleteSession(hashSessionToken(token)));
-      }
-    },
-    setSetting(key: string, value: string, updatedAt = Date.now()) {
-      rawDb.setSetting(key, value, updatedAt);
-      if (isSupaConnected()) {
-        trackSync(supa.upsertSetting(key, value, updatedAt));
-      }
-    },
-    deleteSetting(key: string) {
-      rawDb.deleteSetting(key);
-      if (isSupaConnected()) {
-        trackSync(supa.deleteSetting?.(key) ?? Promise.resolve(false));
-      }
-    }
-  };
 
   let seeded = false;
   let seeding: Promise<void> | null = null;
-  let supabaseSynced = false;
 
   const LEGACY_MOCK_ID_RE = /^MOCK-66-(\d{4})$/i;
 
@@ -204,17 +239,16 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     return String(6600000000 + num);
   }
 
-  async function migrateLegacyMockUsers(syncRemote = false) {
-    const legacyRows = rawDb
-      .listAllUserRows()
+  async function migrateLegacyMockUsers(store: AppStore) {
+    const allUsers = await store.listAllUserRows();
+    const legacyRows = allUsers
       .map((u) => ({ oldUser: u, newId: mapLegacyMockId(u.member_id) }))
       .filter((entry): entry is { oldUser: DbUserRow; newId: string } => Boolean(entry.newId));
 
-    const migratedRows: DbUserRow[] = [];
     const now = Date.now();
 
     for (const { oldUser, newId } of legacyRows) {
-      const existingNew = rawDb.getUser(newId);
+      const existingNew = await store.getUser(newId);
       const isPrimaryAdmin = newId === '6600000001';
       const merged: DbUserRow = existingNew
         ? {
@@ -242,37 +276,23 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
             created_at: oldUser.created_at
           };
 
-      rawDb.upsertUserFromRemote(merged);
-      const savedNew = rawDb.getUser(newId);
-      if (savedNew) migratedRows.push(savedNew);
-    }
-
-    if (syncRemote && isSupaConnected() && migratedRows.length) {
-      await supa.upsertUsers(migratedRows, false);
+      await store.upsertUserFromRemote(merged);
     }
 
     for (const { oldUser, newId } of legacyRows) {
-      rawDb.reassignSessions(oldUser.member_id, newId);
-      if (syncRemote && isSupaConnected()) {
-        await supa.reassignSessions?.(oldUser.member_id, newId);
-      }
+      await store.reassignSessions(oldUser.member_id, newId);
     }
 
-    for (const s of rawDb.listSettings()) {
+    const settings = await store.listSettings();
+    for (const s of settings) {
       if (s.key.startsWith('google_user_map:')) {
         const mapped = mapLegacyMockId(s.value);
         if (mapped) {
-          rawDb.setSetting(s.key, mapped, now);
-          if (syncRemote && isSupaConnected()) {
-            await supa.upsertSetting(s.key, mapped, now);
-          }
-          if (!rawDb.getSetting(`user_google_email:${mapped}`)) {
+          await store.setSetting(s.key, mapped, now);
+          if (!(await store.getSetting(`user_google_email:${mapped}`))) {
             const emailLower = s.key.slice('google_user_map:'.length).trim().toLowerCase();
             if (emailLower) {
-              rawDb.setSetting(`user_google_email:${mapped}`, emailLower, now);
-              if (syncRemote && isSupaConnected()) {
-                await supa.upsertSetting(`user_google_email:${mapped}`, emailLower, now);
-              }
+              await store.setSetting(`user_google_email:${mapped}`, emailLower, now);
             }
           }
         }
@@ -281,115 +301,33 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
         const mapped = mapLegacyMockId(oldMemberId);
         if (mapped) {
           const emailLower = s.value.trim().toLowerCase();
-          if (emailLower && !rawDb.getSetting(`user_google_email:${mapped}`)) {
-            rawDb.setSetting(`user_google_email:${mapped}`, emailLower, now);
-            rawDb.setSetting(`google_user_map:${emailLower}`, mapped, now);
-            if (syncRemote && isSupaConnected()) {
-              await supa.upsertSetting(`user_google_email:${mapped}`, emailLower, now);
-              await supa.upsertSetting(`google_user_map:${emailLower}`, mapped, now);
-            }
+          if (emailLower && !(await store.getSetting(`user_google_email:${mapped}`))) {
+            await store.setSetting(`user_google_email:${mapped}`, emailLower, now);
+            await store.setSetting(`google_user_map:${emailLower}`, mapped, now);
           }
-          rawDb.deleteSetting(s.key);
-          if (syncRemote && isSupaConnected()) {
-            await supa.deleteSetting?.(s.key);
-          }
+          await store.deleteSetting(s.key);
         }
       }
     }
 
     for (const { oldUser } of legacyRows) {
-      rawDb.deleteUser(oldUser.member_id);
-      if (syncRemote && isSupaConnected()) {
-        await supa.deleteUser(oldUser.member_id);
-      }
-    }
-  }
-
-  async function syncWithSupabase(primaryAdminId?: string) {
-    if (!supa.isEnabled() || supabaseSynced) return;
-    const status = await supa.probe();
-    if (status !== 'connected') return;
-
-    supabaseSynced = true;
-
-    const [remoteUsers, remoteSessions, remoteSettings] = await Promise.all([
-      supa.listUsers(),
-      supa.listSessions(),
-      supa.listSettings()
-    ]);
-
-    if (remoteUsers && remoteUsers.length) {
-      for (const ru of remoteUsers) {
-        rawDb.upsertUserFromRemote(ru);
-      }
-    }
-    if (primaryAdminId) {
-      rawDb.seedFromMembers([{ member_id: primaryAdminId, full_name: '' }]);
-    }
-
-    if (remoteSessions && remoteSessions.length) {
-      for (const rs of remoteSessions) {
-        if (rawDb.getUser(rs.member_id)) {
-          rawDb.upsertSessionFromRemote(rs.token_hash, rs.member_id, rs.expires_at);
-        }
-      }
-    }
-
-    if (remoteSettings && remoteSettings.length) {
-      for (const rs of remoteSettings) {
-        const local = rawDb.getSettingRow(rs.key);
-        if (!local || rs.updated_at > local.updated_at) {
-          rawDb.setSetting(rs.key, rs.value, rs.updated_at);
-          if (rs.key === 'sheet_config' && typeof sheetSource.setConfig === 'function') {
-            try {
-              const parsed = JSON.parse(rs.value) as Partial<SheetConfig>;
-              if (parsed && (parsed.mode === 'mock' || parsed.mode === 'google')) {
-                sheetSource.setConfig({
-                  mode: parsed.mode,
-                  sheetId: String(parsed.sheetId || ''),
-                  sheetTitle: parsed.sheetTitle ? String(parsed.sheetTitle) : undefined
-                });
-              }
-            } catch {
-              // ignore
-            }
-          }
-        }
-      }
-    }
-
-    await migrateLegacyMockUsers(true);
-
-    // Push local seeded users & settings up to Supabase
-    const localUsers = rawDb.listAllUserRows();
-    if (localUsers.length) {
-      await supa.upsertUsers(localUsers, true);
-      if (primaryAdminId) {
-        const adminRow = rawDb.getUser(primaryAdminId);
-        if (adminRow) await supa.upsertUsers([adminRow], false);
-      }
-    }
-
-    const remoteSettingByKey = new Map((remoteSettings || []).map((s) => [s.key, s]));
-    for (const ls of rawDb.listSettings()) {
-      const rs = remoteSettingByKey.get(ls.key);
-      if (!rs || ls.updated_at > rs.updated_at) {
-        await supa.upsertSetting(ls.key, ls.value, ls.updated_at);
-      }
+      await store.deleteUser(oldUser.member_id);
     }
   }
 
   async function cleanupLegacyGoogleUsers(primaryAdminId = '6600000001') {
-    const targetAdmin = rawDb.getUser(primaryAdminId) || rawDb.getUser('6600000001');
+    const store = await initStore();
+    const targetAdmin = (await store.getUser(primaryAdminId)) || (await store.getUser('6600000001'));
     if (!targetAdmin) return;
 
-    const legacyUsers = rawDb
-      .listAllUserRows()
+    const allUsers = await store.listAllUserRows();
+    const legacyUsers = allUsers
       .filter((u) => /^GOOGLE-/i.test(u.member_id))
       .map((u) => u.member_id);
 
     const legacyIds = new Set<string>(legacyUsers);
-    for (const s of rawDb.listSettings()) {
+    const settings = await store.listSettings();
+    for (const s of settings) {
       if (s.key.startsWith('google_user_map:') && /^GOOGLE-/i.test(s.value.trim())) {
         legacyIds.add(s.value.trim());
       }
@@ -399,33 +337,32 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
 
     const now = Date.now();
     for (const legacyId of legacyIds) {
-      rawDb.reassignSessions(legacyId, targetAdmin.member_id);
-      if (isSupaConnected()) {
-        await supa.reassignSessions?.(legacyId, targetAdmin.member_id);
-      }
+      await store.reassignSessions(legacyId, targetAdmin.member_id);
 
-      for (const s of rawDb.listSettings()) {
+      for (const s of settings) {
         if (
           s.key.startsWith('google_user_map:') &&
           s.value.trim().toUpperCase() === legacyId.toUpperCase()
         ) {
           const emailLower = s.key.slice('google_user_map:'.length).trim().toLowerCase();
           if (emailLower) {
-            database.setSetting(`google_user_map:${emailLower}`, targetAdmin.member_id, now);
-            database.setSetting(`user_google_email:${targetAdmin.member_id}`, emailLower, now);
-            if (isSupaConnected()) {
-              await supa.upsertSetting(`google_user_map:${emailLower}`, targetAdmin.member_id, now);
-              await supa.upsertSetting(`user_google_email:${targetAdmin.member_id}`, emailLower, now);
-            }
+            await store.setSetting(`google_user_map:${emailLower}`, targetAdmin.member_id, now);
+            await store.setSetting(`user_google_email:${targetAdmin.member_id}`, emailLower, now);
           }
         }
       }
 
-      rawDb.deleteUser(legacyId);
-      if (isSupaConnected()) {
-        await supa.deleteUser(legacyId);
-      }
+      await store.deleteUser(legacyId);
     }
+  }
+
+  async function seedWithMembers(members: MemberRecord[]) {
+    const store = await initStore();
+    await migrateLegacyMockUsers(store);
+    await store.seedFromMembers(members);
+    const primaryAdminId = members[0]?.member_id;
+    await cleanupLegacyGoogleUsers(primaryAdminId);
+    seeded = true;
   }
 
   async function ensureSeeded() {
@@ -433,14 +370,13 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     if (seeding) return seeding;
     seeding = (async () => {
       try {
+        await initStore();
         const r = await sheetSource.getData();
-        await migrateLegacyMockUsers(false);
-        database.seedFromMembers(r.data.Members);
-        const primaryAdminId = r.data.Members[0]?.member_id;
-        await syncWithSupabase(primaryAdminId);
-        await cleanupLegacyGoogleUsers(primaryAdminId);
-        seeded = true;
+        await seedWithMembers(r.data.Members);
       } catch (e) {
+        if (e instanceof StoreUnavailableError) {
+          throw e;
+        }
         console.error('seed:', (e as Error).message);
       } finally {
         seeding = null;
@@ -449,59 +385,36 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     return seeding;
   }
 
-  function getLinkedGoogleEmail(memberId: string): string | null {
-    return database.getLinkedGoogleEmail(memberId);
+  async function getLinkedGoogleEmail(memberId: string): Promise<string | null> {
+    return (await initStore()).getLinkedGoogleEmail(memberId);
   }
 
-  function withLinkedGoogleEmail(
+  async function withLinkedGoogleEmail(
     u: Omit<SessionUser, 'linkedGoogleEmail'> & { linkedGoogleEmail?: string | null }
-  ): SessionUser {
+  ): Promise<SessionUser> {
     return {
       member_id: u.member_id,
       full_name: u.full_name,
       role: u.role,
       theme: u.theme,
-      linkedGoogleEmail: getLinkedGoogleEmail(u.member_id)
+      linkedGoogleEmail: await getLinkedGoogleEmail(u.member_id)
     };
   }
 
   async function resolveSession(token: string | undefined | null): Promise<SessionUser | null> {
     if (!token) return null;
-    const local = database.getSession(token);
-    if (local) return withLinkedGoogleEmail(local);
-    if (isSupaConnected()) {
-      const remote = await supa.getSession(hashSessionToken(token));
-      if (remote) {
-        rawDb.upsertUserFromRemote(remote.row);
-        rawDb.upsertSessionFromRemote(hashSessionToken(token), remote.row.member_id, remote.expires_at);
-        return withLinkedGoogleEmail(remote.user);
-      }
-    }
-    return null;
+    return (await initStore()).getSession(token);
   }
 
   async function resolveUser(id: string): Promise<DbUserRow | null> {
-    const local = database.getUser(id);
-    if (local) return local;
-    if (isSupaConnected()) {
-      const remote = await supa.getUser(id);
-      if (remote) {
-        rawDb.upsertUserFromRemote(remote);
-        return rawDb.getUser(id);
-      }
-    }
-    return null;
+    return (await initStore()).getUser(id);
   }
 
   async function getDashboard(force = false): Promise<DashboardPayload> {
+    const store = await initStore();
     const r = await sheetSource.getData({ force });
     if (!seeded) {
-      await migrateLegacyMockUsers(false);
-      database.seedFromMembers(r.data.Members);
-      const primaryAdminId = r.data.Members[0]?.member_id;
-      await syncWithSupabase(primaryAdminId);
-      await cleanupLegacyGoogleUsers(primaryAdminId);
-      seeded = true;
+      await seedWithMembers(r.data.Members);
     }
     const cfg = typeof sheetSource.getConfig === 'function' ? sheetSource.getConfig() : undefined;
     return {
@@ -512,30 +425,14 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
         stale: Boolean(r.stale),
         sheetId: cfg?.mode === 'google' ? cfg.sheetId : undefined,
         sheetTitle: cfg?.mode === 'google' ? cfg.sheetTitle : undefined,
-        dbBackend: getDbBackend(),
+        dbBackend: store.backend,
         supabaseStatus: getSupabaseStatus()
       }
     };
   }
 
-  async function saveSettingToSupabase(key: string, value: string, updatedAt = Date.now()): Promise<boolean> {
-    if (!isSupaConnected()) return false;
-    return await supa.upsertSetting(key, value, updatedAt);
-  }
-
-  async function deleteSettingFromSupabase(key: string): Promise<boolean> {
-    if (!isSupaConnected()) return false;
-    return (await supa.deleteSetting?.(key)) ?? false;
-  }
-
-  function setSetting(key: string, value: string, updatedAt = Date.now()) {
-    database.setSetting(key, value, updatedAt);
-  }
-
-  async function flushSync() {
-    if (pendingSyncs.size) {
-      await Promise.allSettled(Array.from(pendingSyncs));
-    }
+  async function setSetting(key: string, value: string, updatedAt = Date.now()) {
+    await database.setSetting(key, value, updatedAt);
   }
 
   return {
@@ -546,6 +443,7 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     tz,
     loginLimit,
     chatLimit,
+    initStore,
     ensureSeeded,
     cleanupLegacyGoogleUsers,
     getLinkedGoogleEmail,
@@ -555,10 +453,7 @@ export function createRuntime({ env = process.env, db, source, supabase }: Runti
     getDashboard,
     getDbBackend,
     getSupabaseStatus,
-    saveSettingToSupabase,
-    deleteSettingFromSupabase,
-    setSetting,
-    flushSync
+    setSetting
   };
 }
 

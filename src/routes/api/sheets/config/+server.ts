@@ -29,7 +29,12 @@ export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) return jsonFail(401, 'Not signed in');
   const rt = locals.runtime;
   const cfg = rt.source.getConfig();
-  const recentSheets = readRecentSheets(rt.db.getSetting('recent_sheets'));
+  const [recentRaw, providerTokenRaw, googleEmailRaw] = await Promise.all([
+    rt.db.getSetting('recent_sheets'),
+    rt.db.getSetting('google_provider_token'),
+    rt.db.getSetting('google_connected_email')
+  ]);
+  const recentSheets = readRecentSheets(recentRaw);
 
   return jsonOk({
     mode: cfg.mode,
@@ -38,8 +43,8 @@ export const GET: RequestHandler = async ({ locals }) => {
     hasGoogleApiKey: Boolean((rt.env.GOOGLE_API_KEY || '').trim()),
     googleClientId: (rt.env.PUBLIC_GOOGLE_CLIENT_ID || '').trim(),
     supabaseOAuthAvailable: Boolean((rt.env.SUPABASE_URL || '').trim()),
-    hasDriveToken: Boolean((rt.db.getSetting('google_provider_token') || '').trim()),
-    googleEmail: rt.db.getSetting('google_connected_email') || '',
+    hasDriveToken: Boolean((providerTokenRaw || '').trim()),
+    googleEmail: googleEmailRaw || '',
     supabaseStatus: rt.getSupabaseStatus(),
     dbBackend: rt.getDbBackend(),
     recentSheets
@@ -61,12 +66,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return jsonFail(err.code || 400, err.message || 'bad json');
   }
 
-  const recentSheets = readRecentSheets(rt.db.getSetting('recent_sheets'));
+  const recentSheets = readRecentSheets(await rt.db.getSetting('recent_sheets'));
 
   if (body.mode === 'mock') {
     const nextConfig: SheetConfig = { mode: 'mock', sheetId: '' };
     rt.source.setConfig(nextConfig);
-    rt.db.setSetting('sheet_config', JSON.stringify(nextConfig));
+    await rt.db.setSetting('sheet_config', JSON.stringify(nextConfig));
     const res = await rt.source.getData({ force: true });
     return jsonOk({
       ok: true,
@@ -103,7 +108,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       sheetTitle: cleanTitle || undefined
     };
     rt.source.setConfig(nextConfig);
-    rt.db.setSetting('sheet_config', JSON.stringify(nextConfig));
+    await rt.db.setSetting('sheet_config', JSON.stringify(nextConfig));
 
     const updatedRecent: RecentSheetItem[] = [
       {
@@ -113,7 +118,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       },
       ...recentSheets.filter((s) => s.sheetId !== sheetId)
     ].slice(0, 8);
-    rt.db.setSetting('recent_sheets', JSON.stringify(updatedRecent));
+    await rt.db.setSetting('recent_sheets', JSON.stringify(updatedRecent));
 
     // Warm the cache with the freshly validated sheet
     await rt.source.getData({ force: true });
