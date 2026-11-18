@@ -1,40 +1,38 @@
 // Accounts + sessions in SQLite (bun:sqlite in Bun, node:sqlite fallback in Node).
-// Passwords are scrypt-hashed with a per-user salt; session tokens are random and only their SHA-256 is stored.
+// Used as the local fallback store when Supabase is not configured or unavailable at startup.
 import { createRequire } from 'node:module';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  generateSessionToken,
+  hashPassword,
+  hashSessionToken,
+  normalizeMemberId,
+  SESSION_MS,
+  verifyPasswordHash,
+  type DbSessionRow,
+  type DbSettingRow,
+  type DbUserRow,
+  type PublicUser,
+  type SessionUser,
+  type ThemeMode,
+  type UserRole
+} from './auth-crypto';
 import type { MemberRecord } from './sheets';
+import type { AppStore } from './store';
 
-export type UserRole = 'admin' | 'user';
-export type ThemeMode = 'light' | 'dark';
-
-export interface DbUserRow {
-  member_id: string;
-  full_name: string;
-  role: UserRole;
-  pw_hash: string | null;
-  pw_salt: string | null;
-  theme: ThemeMode | null;
-  created_at: number;
-}
-
-export interface SessionUser {
-  member_id: string;
-  full_name: string;
-  role: UserRole;
-  theme: ThemeMode | null;
-  linkedGoogleEmail: string | null;
-}
-
-export interface PublicUser {
-  member_id: string;
-  full_name: string;
-  role: UserRole;
-  has_password: boolean;
-  theme: ThemeMode | null;
-  created_at: number;
-}
+export {
+  hashSessionToken,
+  normalizeMemberId,
+  SESSION_MS,
+  type DbSessionRow,
+  type DbSettingRow,
+  type DbUserRow,
+  type PublicUser,
+  type SessionUser,
+  type ThemeMode,
+  type UserRole
+};
 
 interface SqliteStatement {
   get(...params: unknown[]): unknown;
@@ -60,34 +58,6 @@ function openSqliteDatabase(file: string): SqliteDatabase {
   const Ctor = isBun ? mod.Database : mod.DatabaseSync || mod.Database;
   if (!Ctor) throw new Error(`SQLite driver unavailable in ${modName}`);
   return new Ctor(file);
-}
-
-export function normalizeMemberId(id: string): string {
-  const trimmed = id.trim();
-  if (/^(mock-|st)/i.test(trimmed)) return trimmed.toUpperCase();
-  return trimmed;
-}
-
-export const SESSION_MS = 7 * 24 * 3600 * 1000;
-const sha = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
-export const hashSessionToken = sha;
-
-export interface DbSettingRow {
-  key: string;
-  value: string;
-  updated_at: number;
-}
-
-export interface DbSessionRow {
-  token_hash: string;
-  member_id: string;
-  expires_at: number;
-}
-
-function scrypt(password: string, salt: string): Promise<Buffer> {
-  return new Promise((resolve, reject) =>
-    crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 }, (e, k) => (e ? reject(e) : resolve(k)))
-  );
 }
 
 export function openDb(file: string) {
@@ -237,8 +207,8 @@ export function openDb(file: string) {
     async setPassword(id: string, password: string) {
       const u = q.get.get(id.trim()) as DbUserRow | undefined;
       const targetId = u ? u.member_id : id.trim();
-      const salt = crypto.randomBytes(16).toString('hex');
-      q.setPw.run((await scrypt(password, salt)).toString('hex'), salt, targetId);
+      const { hash, salt } = await hashPassword(password);
+      q.setPw.run(hash, salt, targetId);
       q.sessDelUser.run(targetId);
     },
     resetPassword(id: string) {
@@ -253,25 +223,20 @@ export function openDb(file: string) {
     },
     async verifyPassword(id: string, password: string): Promise<SessionUser | null> {
       const u = q.get.get(id.trim()) as DbUserRow | undefined;
-      // Always spend the same work, even for unknown users, to avoid timing leaks.
-      const salt = u?.pw_salt || 'x'.repeat(32);
-      const hash = await scrypt(password, salt);
-      if (!u || !u.pw_hash) return null;
-      const ok = crypto.timingSafeEqual(hash, Buffer.from(u.pw_hash, 'hex'));
-      return ok
-        ? {
-            member_id: u.member_id,
-            full_name: u.full_name,
-            role: u.role,
-            theme: u.theme,
-            linkedGoogleEmail: getLinkedGoogleEmail(u.member_id)
-          }
-        : null;
+      const ok = await verifyPasswordHash(password, u?.pw_hash ?? null, u?.pw_salt ?? null);
+      if (!u || !ok) return null;
+      return {
+        member_id: u.member_id,
+        full_name: u.full_name,
+        role: u.role,
+        theme: u.theme,
+        linkedGoogleEmail: getLinkedGoogleEmail(u.member_id)
+      };
     },
     createSession(member_id: string): string {
-      const token = crypto.randomBytes(32).toString('hex');
+      const token = generateSessionToken();
       q.sessPurge.run(Date.now());
-      q.sessIns.run(sha(token), member_id, Date.now() + SESSION_MS);
+      q.sessIns.run(hashSessionToken(token), member_id, Date.now() + SESSION_MS);
       return token;
     },
     upsertSessionFromRemote(token_hash: string, member_id: string, expires_at: number) {
@@ -279,7 +244,7 @@ export function openDb(file: string) {
     },
     getSession(token: string | undefined | null): SessionUser | null {
       if (!token) return null;
-      const row = q.sessGet.get(sha(token), Date.now()) as
+      const row = q.sessGet.get(hashSessionToken(token), Date.now()) as
         | Omit<SessionUser, 'linkedGoogleEmail'>
         | undefined;
       if (!row) return null;
@@ -295,7 +260,7 @@ export function openDb(file: string) {
       q.sessReassign.run(toMemberId, fromMemberId);
     },
     deleteSession(token: string | undefined | null) {
-      if (token) q.sessDel.run(sha(token));
+      if (token) q.sessDel.run(hashSessionToken(token));
     },
     getLinkedGoogleEmail,
     getSetting(key: string): string | null {
@@ -323,3 +288,76 @@ export function openDb(file: string) {
 }
 
 export type AppDb = ReturnType<typeof openDb>;
+
+export function createSqliteStore(rawDb: AppDb): AppStore {
+  return {
+    backend: 'sqlite',
+    isMemory: rawDb.isMemory,
+    async seedFromMembers(members) {
+      rawDb.seedFromMembers(members);
+    },
+    async getUser(id) {
+      return rawDb.getUser(id);
+    },
+    async listUsers() {
+      return rawDb.listUsers();
+    },
+    async listAllUserRows() {
+      return rawDb.listAllUserRows();
+    },
+    async upsertUserFromRemote(u) {
+      rawDb.upsertUserFromRemote(u);
+    },
+    async createUser(member_id, full_name, role) {
+      rawDb.createUser(member_id, full_name, role);
+    },
+    async deleteUser(id) {
+      return rawDb.deleteUser(id);
+    },
+    async setPassword(id, password) {
+      await rawDb.setPassword(id, password);
+    },
+    async resetPassword(id) {
+      rawDb.resetPassword(id);
+    },
+    async setTheme(id, theme) {
+      rawDb.setTheme(id, theme);
+    },
+    async verifyPassword(id, password) {
+      return rawDb.verifyPassword(id, password);
+    },
+    async createSession(member_id) {
+      return rawDb.createSession(member_id);
+    },
+    async getSession(token) {
+      return rawDb.getSession(token);
+    },
+    async deleteSession(token) {
+      rawDb.deleteSession(token);
+    },
+    async reassignSessions(fromMemberId, toMemberId) {
+      rawDb.reassignSessions(fromMemberId, toMemberId);
+    },
+    async getLinkedGoogleEmail(memberId) {
+      return rawDb.getLinkedGoogleEmail(memberId);
+    },
+    async getSetting(key) {
+      return rawDb.getSetting(key);
+    },
+    async getSettingRow(key) {
+      return rawDb.getSettingRow(key);
+    },
+    async setSetting(key, value, updatedAt) {
+      rawDb.setSetting(key, value, updatedAt);
+    },
+    async deleteSetting(key) {
+      rawDb.deleteSetting(key);
+    },
+    async listSettings() {
+      return rawDb.listSettings();
+    },
+    close() {
+      rawDb.close();
+    }
+  };
+}

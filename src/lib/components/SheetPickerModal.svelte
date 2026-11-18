@@ -370,7 +370,7 @@
           class={`badge ${
             supabaseStatus === 'connected'
               ? 'ok'
-              : supabaseStatus === 'schema_missing'
+              : supabaseStatus === 'schema_missing' || supabaseStatus === 'unreachable'
                 ? 'wait'
                 : ''
           }`}
@@ -379,6 +379,8 @@
             Supabase (public-cee-v2)
           {:else if supabaseStatus === 'schema_missing'}
             Local SQLite (run schema.sql)
+          {:else if supabaseStatus === 'unreachable'}
+            Local SQLite (Supabase unreachable)
           {:else}
             Local SQLite
           {/if}

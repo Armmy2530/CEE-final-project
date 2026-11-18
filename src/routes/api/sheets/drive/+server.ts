@@ -86,22 +86,26 @@ export const GET: RequestHandler = async ({ locals, request, url }) => {
   const authHeader = request.headers.get('authorization') || '';
   const bearer = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
   const queryToken = (url.searchParams.get('access_token') || '').trim();
-  const storedOAuthToken = (rt.db.getSetting('google_provider_token') || '').trim();
+  const [providerTokenRaw, recentRaw, googleEmailRaw] = await Promise.all([
+    rt.db.getSetting('google_provider_token'),
+    rt.db.getSetting('recent_sheets'),
+    rt.db.getSetting('google_connected_email')
+  ]);
+  const storedOAuthToken = (providerTokenRaw || '').trim();
   const envToken = (rt.env.GOOGLE_DRIVE_ACCESS_TOKEN || '').trim();
   const token = bearer || queryToken || storedOAuthToken || envToken;
   const usingStoredToken = Boolean(!bearer && !queryToken && storedOAuthToken);
 
   let recentSheets: unknown[] = [];
   try {
-    const raw = rt.db.getSetting('recent_sheets');
-    if (raw) recentSheets = JSON.parse(raw);
+    if (recentRaw) recentSheets = JSON.parse(recentRaw);
   } catch {
     recentSheets = [];
   }
 
   const googleClientId = (rt.env.PUBLIC_GOOGLE_CLIENT_ID || '').trim();
   const supabaseOAuthAvailable = Boolean((rt.env.SUPABASE_URL || '').trim());
-  const googleEmail = rt.db.getSetting('google_connected_email') || '';
+  const googleEmail = googleEmailRaw || '';
 
   if (!token) {
     return jsonOk({
@@ -128,8 +132,7 @@ export const GET: RequestHandler = async ({ locals, request, url }) => {
     if (!res.ok) {
       if (res.status === 401 && usingStoredToken) {
         const now = Date.now();
-        rt.db.setSetting('google_provider_token', '', now);
-        await rt.saveSettingToSupabase('google_provider_token', '', now);
+        await rt.db.setSetting('google_provider_token', '', now);
         return jsonOk({
           files: [],
           recentSheets,

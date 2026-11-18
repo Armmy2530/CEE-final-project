@@ -102,7 +102,7 @@ export interface ProjectSummary {
 }
 
 export type DbBackend = 'supabase' | 'sqlite';
-export type SupabaseStatus = 'connected' | 'schema_missing' | 'disabled';
+export type SupabaseStatus = 'connected' | 'schema_missing' | 'unreachable' | 'disabled';
 
 export interface DashboardPayload {
   today: string;

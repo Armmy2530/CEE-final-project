@@ -36,9 +36,9 @@ export const POST: RequestHandler = async (event) => {
 
   const role: UserRole =
     id === '6600000001' || id.toUpperCase() === 'MOCK-66-0001' ? 'admin' : 'user';
-  rt.db.createUser(id, name, role);
+  await rt.db.createUser(id, name, role);
   await rt.db.setPassword(id, password);
-  const token = rt.db.createSession(id);
+  const token = await rt.db.createSession(id);
   setSessionCookie(event, token);
 
   return jsonOk(

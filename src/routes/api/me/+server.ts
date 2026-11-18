@@ -6,7 +6,7 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
   const token = cookies.get('sid');
   const user = token ? await locals.runtime.resolveSession(token) : locals.user;
   if (!user) return jsonFail(401, 'Not signed in');
-  const enriched = locals.runtime.withLinkedGoogleEmail(user);
+  const enriched = await locals.runtime.withLinkedGoogleEmail(user);
   locals.user = enriched;
   return jsonOk({ user: enriched });
 };

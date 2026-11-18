@@ -1428,40 +1428,307 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
     }
   });
 
-  test('runtime writes through to Supabase and reports dbBackend: supabase when connected', async () => {
-    const upsertedUsers: string[] = [];
-    const upsertedSettings: string[] = [];
-    const mockSupa = {
-      schema: 'public-cee-v2',
-      isEnabled: () => true,
-      getStatus: () => 'connected' as const,
-      probe: async () => 'connected' as const,
-      listUsers: async () => [],
-      getUser: async () => null,
-      upsertUsers: async (users: Array<{ member_id: string }>) => {
-        upsertedUsers.push(...users.map((u) => u.member_id));
-        return true;
-      },
-      deleteUser: async () => true,
-      listSessions: async () => [],
-      getSession: async () => null,
-      upsertSession: async () => true,
-      deleteSession: async () => true,
-      deleteUserSessions: async () => true,
-      reassignSessions: async () => true,
-      listSettings: async () => [],
-      upsertSetting: async (key: string) => {
-        upsertedSettings.push(key);
-        return true;
-      },
-      deleteSetting: async () => true
-    };
+  function createFakeSupabaseServer(initial?: {
+    users?: Array<{
+      member_id: string;
+      full_name: string;
+      role: 'admin' | 'user';
+      pw_hash?: string | null;
+      pw_salt?: string | null;
+      theme?: 'light' | 'dark' | null;
+      created_at?: number;
+    }>;
+    sessions?: Array<{ token_hash: string; member_id: string; created_at: number; expires_at: number }>;
+    settings?: Array<{ key: string; value: string; updated_at: number }>;
+  }) {
+    const users = new Map<
+      string,
+      {
+        member_id: string;
+        full_name: string;
+        role: 'admin' | 'user';
+        pw_hash: string | null;
+        pw_salt: string | null;
+        theme: 'light' | 'dark' | null;
+        created_at: number;
+      }
+    >();
+    const sessions = new Map<
+      string,
+      { token_hash: string; member_id: string; created_at: number; expires_at: number }
+    >();
+    const settings = new Map<string, { key: string; value: string; updated_at: number }>();
 
-    const { call, close } = createHarness({}, undefined, mockSupa);
+    for (const u of initial?.users || []) {
+      users.set(u.member_id.toLowerCase(), {
+        member_id: u.member_id,
+        full_name: u.full_name,
+        role: u.role,
+        pw_hash: u.pw_hash ?? null,
+        pw_salt: u.pw_salt ?? null,
+        theme: u.theme ?? null,
+        created_at: u.created_at ?? Date.now()
+      });
+    }
+    for (const s of initial?.sessions || []) sessions.set(s.token_hash, { ...s });
+    for (const s of initial?.settings || []) settings.set(s.key, { ...s });
+
+    let failMode: 'none' | 'schema_missing' | 'unreachable' | 'error_500' = 'none';
+
+    const unescapeIlike = (s: string) =>
+      s.replace(/\\\\%/g, '%').replace(/\\\\_/g, '_').replace(/\\\\%|\\\\_|\\\\\\\\/g, (m) => m.slice(-1));
+
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (failMode === 'unreachable') throw new TypeError('fetch failed');
+      if (failMode === 'schema_missing') {
+        return new Response(
+          JSON.stringify({ code: 'PGRST106', message: 'The schema must be one of the following: public' }),
+          { status: 406 }
+        );
+      }
+      if (failMode === 'error_500') {
+        return new Response('Supabase internal error', { status: 500 });
+      }
+
+      const method = (init?.method || 'GET').toUpperCase();
+      const hdrs = new Headers(init?.headers);
+      const prefer = hdrs.get('prefer') || '';
+      const u = new URL(String(url));
+      const table = u.pathname.replace(/^\/rest\/v1\//, '');
+      const bodyJson =
+        init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+
+      if (table === 'users') {
+        if (method === 'GET') {
+          let rows = Array.from(users.values());
+          const ilike = u.searchParams.get('member_id');
+          if (ilike?.startsWith('ilike.')) {
+            const target = unescapeIlike(ilike.slice(6)).toLowerCase();
+            rows = rows.filter((r) => r.member_id.toLowerCase() === target);
+          } else if (ilike?.startsWith('eq.')) {
+            const target = ilike.slice(3);
+            rows = rows.filter((r) => r.member_id === target);
+          }
+          const roleEq = u.searchParams.get('role');
+          if (roleEq?.startsWith('eq.')) {
+            const target = roleEq.slice(3);
+            rows = rows.filter((r) => r.role === target);
+          }
+          const order = u.searchParams.get('order') || '';
+          if (order.includes('role.asc')) {
+            rows.sort((a, b) => a.role.localeCompare(b.role) || a.member_id.localeCompare(b.member_id));
+          } else if (order.includes('created_at.asc')) {
+            rows.sort((a, b) => a.created_at - b.created_at || a.member_id.localeCompare(b.member_id));
+          }
+          const limit = Number(u.searchParams.get('limit') || 0);
+          if (limit > 0) rows = rows.slice(0, limit);
+          return new Response(JSON.stringify(rows), { status: 200 });
+        }
+        if (method === 'POST') {
+          const items = (Array.isArray(bodyJson) ? bodyJson : [bodyJson]) as Array<Record<string, unknown>>;
+          const ignoreDup = prefer.includes('ignore-duplicates');
+          const mergeDup = prefer.includes('merge-duplicates');
+          for (const item of items) {
+            const id = String(item.member_id || '');
+            const key = id.toLowerCase();
+            const existing = users.get(key);
+            if (existing) {
+              if (ignoreDup) continue;
+              if (!mergeDup && !u.searchParams.has('on_conflict')) {
+                return new Response(JSON.stringify({ code: '23505', message: 'duplicate' }), { status: 409 });
+              }
+              users.set(key, {
+                member_id: id,
+                full_name: String(item.full_name ?? existing.full_name),
+                role: (item.role === 'admin' ? 'admin' : 'user'),
+                pw_hash: item.pw_hash !== undefined ? (item.pw_hash as string | null) : existing.pw_hash,
+                pw_salt: item.pw_salt !== undefined ? (item.pw_salt as string | null) : existing.pw_salt,
+                theme:
+                  item.theme !== undefined
+                    ? (item.theme as 'light' | 'dark' | null)
+                    : existing.theme,
+                created_at: Number(item.created_at) || existing.created_at
+              });
+            } else {
+              users.set(key, {
+                member_id: id,
+                full_name: String(item.full_name || ''),
+                role: item.role === 'admin' ? 'admin' : 'user',
+                pw_hash: (item.pw_hash as string | null) ?? null,
+                pw_salt: (item.pw_salt as string | null) ?? null,
+                theme: (item.theme as 'light' | 'dark' | null) ?? null,
+                created_at: Number(item.created_at) || Date.now()
+              });
+            }
+          }
+          return new Response('', { status: 201 });
+        }
+        if (method === 'PATCH') {
+          const eq = u.searchParams.get('member_id');
+          const patch = (bodyJson || {}) as Record<string, unknown>;
+          if (eq?.startsWith('eq.')) {
+            const target = eq.slice(3);
+            const cur = users.get(target.toLowerCase());
+            if (cur && cur.member_id === target) {
+              users.set(target.toLowerCase(), {
+                ...cur,
+                ...(patch.role !== undefined ? { role: patch.role as 'admin' | 'user' } : {}),
+                ...(patch.pw_hash !== undefined ? { pw_hash: patch.pw_hash as string | null } : {}),
+                ...(patch.pw_salt !== undefined ? { pw_salt: patch.pw_salt as string | null } : {}),
+                ...(patch.theme !== undefined ? { theme: patch.theme as 'light' | 'dark' | null } : {})
+              });
+            }
+          }
+          return new Response('', { status: 204 });
+        }
+        if (method === 'DELETE') {
+          const eq = u.searchParams.get('member_id');
+          if (eq?.startsWith('eq.')) {
+            const target = eq.slice(3);
+            users.delete(target.toLowerCase());
+            for (const [th, s] of sessions) {
+              if (s.member_id === target) sessions.delete(th);
+            }
+          }
+          return new Response('', { status: 204 });
+        }
+      }
+
+      if (table === 'sessions') {
+        if (method === 'GET') {
+          let rows = Array.from(sessions.values());
+          const thEq = u.searchParams.get('token_hash');
+          if (thEq?.startsWith('eq.')) {
+            const target = thEq.slice(3);
+            rows = rows.filter((r) => r.token_hash === target);
+          }
+          const expGt = u.searchParams.get('expires_at');
+          if (expGt?.startsWith('gt.')) {
+            const cutoff = Number(expGt.slice(3));
+            rows = rows.filter((r) => r.expires_at > cutoff);
+          }
+          const limit = Number(u.searchParams.get('limit') || 0);
+          if (limit > 0) rows = rows.slice(0, limit);
+          const select = u.searchParams.get('select') || '';
+          const payload = rows.map((r) => {
+            if (!select.includes('users(')) return r;
+            const usr = users.get(r.member_id.toLowerCase());
+            return {
+              ...r,
+              users: usr
+                ? {
+                    member_id: usr.member_id,
+                    full_name: usr.full_name,
+                    role: usr.role,
+                    theme: usr.theme
+                  }
+                : null
+            };
+          });
+          return new Response(JSON.stringify(payload), { status: 200 });
+        }
+        if (method === 'POST') {
+          const item = bodyJson as {
+            token_hash: string;
+            member_id: string;
+            created_at: number;
+            expires_at: number;
+          };
+          sessions.set(item.token_hash, { ...item });
+          return new Response('', { status: 201 });
+        }
+        if (method === 'PATCH') {
+          const memEq = u.searchParams.get('member_id');
+          const patch = bodyJson as { member_id?: string };
+          if (memEq?.startsWith('eq.') && patch.member_id) {
+            const fromId = memEq.slice(3);
+            for (const s of sessions.values()) {
+              if (s.member_id === fromId) s.member_id = patch.member_id;
+            }
+          }
+          return new Response('', { status: 204 });
+        }
+        if (method === 'DELETE') {
+          const thEq = u.searchParams.get('token_hash');
+          const memEq = u.searchParams.get('member_id');
+          if (thEq?.startsWith('eq.')) {
+            sessions.delete(thEq.slice(3));
+          } else if (memEq?.startsWith('eq.')) {
+            const target = memEq.slice(3);
+            for (const [th, s] of sessions) {
+              if (s.member_id === target) sessions.delete(th);
+            }
+          }
+          return new Response('', { status: 204 });
+        }
+      }
+
+      if (table === 'app_settings') {
+        if (method === 'GET') {
+          let rows = Array.from(settings.values());
+          const keyEq = u.searchParams.get('key');
+          if (keyEq?.startsWith('eq.')) {
+            const target = keyEq.slice(3);
+            rows = rows.filter((r) => r.key === target);
+          }
+          const limit = Number(u.searchParams.get('limit') || 0);
+          if (limit > 0) rows = rows.slice(0, limit);
+          return new Response(JSON.stringify(rows), { status: 200 });
+        }
+        if (method === 'POST') {
+          const item = bodyJson as { key: string; value: string; updated_at: number };
+          settings.set(item.key, {
+            key: item.key,
+            value: item.value,
+            updated_at: Number(item.updated_at) || Date.now()
+          });
+          return new Response('', { status: 201 });
+        }
+        if (method === 'DELETE') {
+          const keyEq = u.searchParams.get('key');
+          if (keyEq?.startsWith('eq.')) settings.delete(keyEq.slice(3));
+          return new Response('', { status: 204 });
+        }
+      }
+
+      return new Response('Not Found', { status: 404 });
+    }) as typeof fetch;
+
+    const client = createSupabaseClient({
+      env: {
+        SUPABASE_URL: 'https://demo.supabase.co',
+        SUPABASE_SECRET_KEY: 'sb_secret_test',
+        SUPABASE_SCHEMA: 'public-cee-v2'
+      },
+      fetchImpl
+    });
+
+    return {
+      client,
+      users,
+      sessions,
+      settings,
+      setFailMode(mode: 'none' | 'schema_missing' | 'unreachable' | 'error_500') {
+        failMode = mode;
+      }
+    };
+  }
+
+  test('runtime uses Supabase exclusively when available and never touches local SQLite', async () => {
+    const fakeSupa = createFakeSupabaseServer();
+    const { call, close, db } = (() => {
+      const localDb = openDb(':memory:');
+      const h = createHarness({}, undefined, fakeSupa.client);
+      return { ...h, db: localDb };
+    })();
+
     try {
       const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
       expect(adm.status).toBe(200);
-      expect(upsertedUsers).toContain('6600000001');
+      expect(fakeSupa.users.has('6600000001')).toBe(true);
+      expect(fakeSupa.users.size).toBe(67);
+      // Local SQLite remained untouched
+      expect(db.listUsers()).toHaveLength(0);
 
       const dash = await call('GET', '/api/dashboard', undefined, adm.cookie);
       expect(dash.status).toBe(200);
@@ -1469,15 +1736,247 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
       expect(dash.body.meta.supabaseStatus).toBe('connected');
 
       await call('POST', '/api/sheets/config', { mode: 'mock' }, adm.cookie);
-      expect(upsertedSettings).toContain('sheet_config');
+      expect(fakeSupa.settings.has('sheet_config')).toBe(true);
     } finally {
+      db.close();
       close();
+    }
+  });
+
+  test('strict when selected: mid-request Supabase failure returns 503 instead of failing over to SQLite', async () => {
+    const fakeSupa = createFakeSupabaseServer();
+    const { call, close } = createHarness({}, undefined, fakeSupa.client);
+    const origWarn = console.warn;
+    console.warn = () => {};
+
+    try {
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
+      expect(adm.status).toBe(200);
+
+      const okDash = await call('GET', '/api/dashboard', undefined, adm.cookie);
+      expect(okDash.status).toBe(200);
+      expect(okDash.body.meta.dbBackend).toBe('supabase');
+
+      // Simulate Supabase outage mid-flight
+      fakeSupa.setFailMode('error_500');
+
+      const failedMe = await call('GET', '/api/me', undefined, adm.cookie);
+      expect(failedMe.status).toBe(503);
+      expect(failedMe.headers.get('x-content-type-options')).toBe('nosniff');
+
+      const failedLogin = await call('POST', '/api/auth/login', {
+        member_id: '6600000001',
+        password: 'AdminPass1'
+      });
+      expect(failedLogin.status).toBe(503);
+
+      // Recovery restores requests without ever falling back to SQLite
+      fakeSupa.setFailMode('none');
+      const recoveredMe = await call('GET', '/api/me', undefined, adm.cookie);
+      expect(recoveredMe.status).toBe(200);
+      expect(recoveredMe.body.user.member_id).toBe('6600000001');
+    } finally {
+      console.warn = origWarn;
+      close();
+    }
+  });
+
+  test('falls back cleanly to local SQLite when Supabase is schema_missing or unreachable at startup', async () => {
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      for (const mode of ['schema_missing', 'unreachable'] as const) {
+        const fakeSupa = createFakeSupabaseServer();
+        fakeSupa.setFailMode(mode);
+        const { call, close } = createHarness({}, undefined, fakeSupa.client);
+        try {
+          const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
+          expect(adm.status).toBe(200);
+
+          const dash = await call('GET', '/api/dashboard', undefined, adm.cookie);
+          expect(dash.status).toBe(200);
+          expect(dash.body.meta.dbBackend).toBe('sqlite');
+          expect(dash.body.meta.supabaseStatus).toBe(mode);
+          expect(fakeSupa.users.size).toBe(0);
+        } finally {
+          close();
+        }
+      }
+    } finally {
+      console.warn = origWarn;
     }
   });
 });
 
 // ---- Supabase Google OAuth & Authenticated Drive / Sheets ----
 describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
+  function createFakeOAuthSupa() {
+    const users = new Map<
+      string,
+      {
+        member_id: string;
+        full_name: string;
+        role: 'admin' | 'user';
+        pw_hash: string | null;
+        pw_salt: string | null;
+        theme: 'light' | 'dark' | null;
+        created_at: number;
+      }
+    >();
+    const sessions = new Map<
+      string,
+      { token_hash: string; member_id: string; created_at: number; expires_at: number }
+    >();
+    const savedSettings = new Map<string, string>();
+    const settingUpdatedAt = new Map<string, number>();
+
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const method = (init?.method || 'GET').toUpperCase();
+      const hdrs = new Headers(init?.headers);
+      const prefer = hdrs.get('prefer') || '';
+      const u = new URL(String(url));
+      const table = u.pathname.replace(/^\/rest\/v1\//, '');
+      const bodyJson =
+        init?.body && typeof init.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
+
+      if (table === 'users') {
+        if (method === 'GET') {
+          let rows = Array.from(users.values());
+          const ilike = u.searchParams.get('member_id');
+          if (ilike?.startsWith('ilike.')) {
+            const target = ilike.slice(6).replace(/\\\\%/g, '%').replace(/\\\\_/g, '_').replace(/\\\\\\\\/g, '\\').toLowerCase();
+            rows = rows.filter((r) => r.member_id.toLowerCase() === target);
+          } else if (ilike?.startsWith('eq.')) {
+            const target = ilike.slice(3);
+            rows = rows.filter((r) => r.member_id === target);
+          }
+          const roleEq = u.searchParams.get('role');
+          if (roleEq?.startsWith('eq.')) rows = rows.filter((r) => r.role === roleEq.slice(3));
+          const limit = Number(u.searchParams.get('limit') || 0);
+          if (limit > 0) rows = rows.slice(0, limit);
+          return new Response(JSON.stringify(rows), { status: 200 });
+        }
+        if (method === 'POST') {
+          const items = (Array.isArray(bodyJson) ? bodyJson : [bodyJson]) as Array<Record<string, unknown>>;
+          const ignoreDup = prefer.includes('ignore-duplicates');
+          for (const item of items) {
+            const id = String(item.member_id || '');
+            const existing = users.get(id.toLowerCase());
+            if (existing && ignoreDup) continue;
+            users.set(id.toLowerCase(), {
+              member_id: id,
+              full_name: String(item.full_name ?? existing?.full_name ?? ''),
+              role: item.role === 'admin' ? 'admin' : 'user',
+              pw_hash: item.pw_hash !== undefined ? (item.pw_hash as string | null) : (existing?.pw_hash ?? null),
+              pw_salt: item.pw_salt !== undefined ? (item.pw_salt as string | null) : (existing?.pw_salt ?? null),
+              theme: item.theme !== undefined ? (item.theme as 'light' | 'dark' | null) : (existing?.theme ?? null),
+              created_at: Number(item.created_at) || existing?.created_at || Date.now()
+            });
+          }
+          return new Response('', { status: 201 });
+        }
+        if (method === 'PATCH') {
+          const target = u.searchParams.get('member_id')?.slice(3) || '';
+          const patch = (bodyJson || {}) as Record<string, unknown>;
+          const cur = users.get(target.toLowerCase());
+          if (cur) {
+            users.set(target.toLowerCase(), {
+              ...cur,
+              ...(patch.role !== undefined ? { role: patch.role as 'admin' | 'user' } : {}),
+              ...(patch.pw_hash !== undefined ? { pw_hash: patch.pw_hash as string | null } : {}),
+              ...(patch.pw_salt !== undefined ? { pw_salt: patch.pw_salt as string | null } : {}),
+              ...(patch.theme !== undefined ? { theme: patch.theme as 'light' | 'dark' | null } : {})
+            });
+          }
+          return new Response('', { status: 204 });
+        }
+        if (method === 'DELETE') {
+          const target = u.searchParams.get('member_id')?.slice(3) || '';
+          users.delete(target.toLowerCase());
+          return new Response('', { status: 204 });
+        }
+      }
+
+      if (table === 'sessions') {
+        if (method === 'GET') {
+          let rows = Array.from(sessions.values());
+          const thEq = u.searchParams.get('token_hash');
+          if (thEq?.startsWith('eq.')) rows = rows.filter((r) => r.token_hash === thEq.slice(3));
+          const expGt = u.searchParams.get('expires_at');
+          if (expGt?.startsWith('gt.')) rows = rows.filter((r) => r.expires_at > Number(expGt.slice(3)));
+          const payload = rows.map((r) => {
+            const usr = users.get(r.member_id.toLowerCase());
+            return { ...r, users: usr || null };
+          });
+          return new Response(JSON.stringify(payload), { status: 200 });
+        }
+        if (method === 'POST') {
+          const item = bodyJson as { token_hash: string; member_id: string; created_at: number; expires_at: number };
+          sessions.set(item.token_hash, { ...item });
+          return new Response('', { status: 201 });
+        }
+        if (method === 'PATCH') {
+          const fromId = u.searchParams.get('member_id')?.slice(3) || '';
+          const toId = (bodyJson as { member_id: string }).member_id;
+          for (const s of sessions.values()) if (s.member_id === fromId) s.member_id = toId;
+          return new Response('', { status: 204 });
+        }
+        if (method === 'DELETE') {
+          const thEq = u.searchParams.get('token_hash');
+          const memEq = u.searchParams.get('member_id');
+          if (thEq?.startsWith('eq.')) sessions.delete(thEq.slice(3));
+          if (memEq?.startsWith('eq.')) {
+            const target = memEq.slice(3);
+            for (const [th, s] of sessions) if (s.member_id === target) sessions.delete(th);
+          }
+          return new Response('', { status: 204 });
+        }
+      }
+
+      if (table === 'app_settings') {
+        if (method === 'GET') {
+          const keyEq = u.searchParams.get('key');
+          let keys = Array.from(savedSettings.keys());
+          if (keyEq?.startsWith('eq.')) keys = keys.filter((k) => k === keyEq.slice(3));
+          const rows = keys.map((k) => ({
+            key: k,
+            value: savedSettings.get(k) || '',
+            updated_at: settingUpdatedAt.get(k) || 0
+          }));
+          return new Response(JSON.stringify(rows), { status: 200 });
+        }
+        if (method === 'POST') {
+          const item = bodyJson as { key: string; value: string; updated_at: number };
+          savedSettings.set(item.key, item.value);
+          settingUpdatedAt.set(item.key, Number(item.updated_at) || Date.now());
+          return new Response('', { status: 201 });
+        }
+        if (method === 'DELETE') {
+          const keyEq = u.searchParams.get('key');
+          if (keyEq?.startsWith('eq.')) {
+            savedSettings.delete(keyEq.slice(3));
+            settingUpdatedAt.delete(keyEq.slice(3));
+          }
+          return new Response('', { status: 204 });
+        }
+      }
+
+      return new Response('Not Found', { status: 404 });
+    }) as typeof fetch;
+
+    return {
+      client: createSupabaseClient({
+        env: {
+          SUPABASE_URL: 'https://demo.supabase.co',
+          SUPABASE_SECRET_KEY: 'sb_secret_test',
+          SUPABASE_SCHEMA: 'public-cee-v2'
+        },
+        fetchImpl
+      }),
+      savedSettings
+    };
+  }
+
   test('GET /api/auth/google returns Supabase authorize URL with Google provider and Drive/Sheets scopes', async () => {
     const noSupa = createHarness({});
     try {
@@ -1519,32 +2018,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
 
   test('Google sign-in hooks only to linked accounts, supports link/unlink, enforces admin-only sheets, and surfaces Drive 403 activationUrl', async () => {
     const origFetch = globalThis.fetch;
-    const savedSettings = new Map<string, string>();
-    const mockSupa = {
-      schema: 'public-cee-v2',
-      isEnabled: () => true,
-      getStatus: () => 'connected' as const,
-      probe: async () => 'connected' as const,
-      listUsers: async () => [],
-      getUser: async () => null,
-      upsertUsers: async () => true,
-      deleteUser: async () => true,
-      listSessions: async () => [],
-      getSession: async () => null,
-      upsertSession: async () => true,
-      deleteSession: async () => true,
-      deleteUserSessions: async () => true,
-      reassignSessions: async () => true,
-      listSettings: async () => [],
-      upsertSetting: async (key: string, value: string) => {
-        savedSettings.set(key, value);
-        return true;
-      },
-      deleteSetting: async (key: string) => {
-        savedSettings.delete(key);
-        return true;
-      }
-    };
+    const { client: mockSupa, savedSettings } = createFakeOAuthSupa();
 
     let driveStatus = 200;
     let capturedDriveAuth = '';
@@ -1836,7 +2310,8 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
     }
   });
 
-  test('ensureSeeded idempotently migrates legacy MOCK-66-0001..0067 rows, sessions, and Google links to 6600000001..6600000067', async () => {
+  test('ensureSeeded idempotently migrates legacy MOCK-66-0001..0067 rows, sessions, and Google links to 6600000001..6600000067 on active store', async () => {
+    // 1. SQLite fallback store migration
     const db = openDb(':memory:');
     db.createUser('MOCK-66-0001', 'Sutthikan Panla', 'admin');
     await db.setPassword('MOCK-66-0001', 'adminpass1');
@@ -1845,74 +2320,10 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
     db.setSetting('google_user_map:sutigran2557@gmail.com', 'MOCK-66-0001', 1000);
     db.setSetting('user_google_email:MOCK-66-0001', 'sutigran2557@gmail.com', 1000);
 
-    const deletedUsers: string[] = [];
-    const deletedSettings: string[] = [];
-    const reassigned: Array<[string, string]> = [];
-    const savedSettings = new Map<string, string>();
-    const upsertedUserIds = new Set<string>();
-
-    const mockSupa = {
-      schema: 'public-cee-v2',
-      isEnabled: () => true,
-      getStatus: () => 'connected' as const,
-      probe: async () => 'connected' as const,
-      listUsers: async () => [
-        {
-          member_id: 'MOCK-66-0001',
-          full_name: 'Sutthikan Panla',
-          role: 'admin' as const,
-          pw_hash: null,
-          pw_salt: null,
-          theme: 'light' as const,
-          created_at: 1000
-        },
-        {
-          member_id: 'MOCK-66-0002',
-          full_name: 'Ella Johnson',
-          role: 'user' as const,
-          pw_hash: null,
-          pw_salt: null,
-          theme: null,
-          created_at: 1000
-        }
-      ],
-      getUser: async () => null,
-      upsertUsers: async (users: Array<{ member_id: string }>) => {
-        for (const u of users) upsertedUserIds.add(u.member_id);
-        return true;
-      },
-      deleteUser: async (id: string) => {
-        deletedUsers.push(id);
-        return true;
-      },
-      listSessions: async () => [],
-      getSession: async () => null,
-      upsertSession: async () => true,
-      deleteSession: async () => true,
-      deleteUserSessions: async () => true,
-      reassignSessions: async (fromId: string, toId: string) => {
-        reassigned.push([fromId, toId]);
-        return true;
-      },
-      listSettings: async () => [
-        { key: 'google_user_map:sutigran2557@gmail.com', value: 'MOCK-66-0001', updated_at: 1000 },
-        { key: 'user_google_email:MOCK-66-0001', value: 'sutigran2557@gmail.com', updated_at: 1000 }
-      ],
-      upsertSetting: async (k: string, v: string) => {
-        savedSettings.set(k, v);
-        return true;
-      },
-      deleteSetting: async (k: string) => {
-        deletedSettings.push(k);
-        return true;
-      }
-    };
-
-    const rt = createRuntime({ db, supabase: mockSupa });
+    const rtSqlite = createRuntime({ db });
     try {
-      await rt.ensureSeeded();
+      await rtSqlite.ensureSeeded();
 
-      // Legacy MOCK-66-0001 is deleted and replaced by 6600000001 with preserved name, password, theme, session, Google link
       expect(db.getUser('MOCK-66-0001')).toBeNull();
       const admin = db.getUser('6600000001');
       expect(admin).not.toBeNull();
@@ -1928,16 +2339,44 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       expect(db.getSetting('google_user_map:sutigran2557@gmail.com')).toBe('6600000001');
       expect(db.getSetting('user_google_email:6600000001')).toBe('sutigran2557@gmail.com');
       expect(db.getSetting('user_google_email:MOCK-66-0001')).toBeNull();
-
-      expect(deletedUsers).toContain('MOCK-66-0001');
-      expect(deletedSettings).toContain('user_google_email:MOCK-66-0001');
-      expect(reassigned).toContainEqual(['MOCK-66-0001', '6600000001']);
-      expect(savedSettings.get('google_user_map:sutigran2557@gmail.com')).toBe('6600000001');
-      expect(savedSettings.get('user_google_email:6600000001')).toBe('sutigran2557@gmail.com');
       expect(db.listUsers()).toHaveLength(67);
     } finally {
       db.close();
     }
+
+    // 2. Supabase primary store migration
+    const { client: mockSupa, savedSettings } = createFakeOAuthSupa();
+    const supaStore = mockSupa.toStore();
+    await supaStore.createUser('MOCK-66-0001', 'Sutthikan Panla', 'admin');
+    await supaStore.setPassword('MOCK-66-0001', 'AdminPass1');
+    await supaStore.setTheme('MOCK-66-0001', 'dark');
+    const supaSess = await supaStore.createSession('MOCK-66-0001');
+    await supaStore.setSetting('google_user_map:sutigran2557@gmail.com', 'MOCK-66-0001', 1000);
+    await supaStore.setSetting('user_google_email:MOCK-66-0001', 'sutigran2557@gmail.com', 1000);
+
+    const rtSupa = createRuntime({ supabase: mockSupa });
+    try {
+      await rtSupa.ensureSeeded();
+
+      expect(await rtSupa.db.getUser('MOCK-66-0001')).toBeNull();
+      const admin = await rtSupa.db.getUser('6600000001');
+      expect(admin?.full_name).toBe('Sutthikan Panla');
+      expect(admin?.role).toBe('admin');
+      expect(admin?.theme).toBe('dark');
+      expect(await rtSupa.db.verifyPassword('6600000001', 'AdminPass1')).not.toBeNull();
+
+      const resolved = await rtSupa.resolveSession(supaSess);
+      expect(resolved?.member_id).toBe('6600000001');
+      expect(resolved?.linkedGoogleEmail).toBe('sutigran2557@gmail.com');
+      expect(savedSettings.get('google_user_map:sutigran2557@gmail.com')).toBe('6600000001');
+      expect(savedSettings.get('user_google_email:6600000001')).toBe('sutigran2557@gmail.com');
+      expect(savedSettings.has('user_google_email:MOCK-66-0001')).toBe(false);
+      expect(await rtSupa.db.listUsers()).toHaveLength(67);
+    } finally {
+      rtSupa.db.close();
+    }
   });
 });
+
+
 

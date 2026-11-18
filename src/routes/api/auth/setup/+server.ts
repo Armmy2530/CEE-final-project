@@ -72,7 +72,7 @@ export const POST: RequestHandler = async (event) => {
   }
 
   await rt.db.setPassword(u.member_id, password);
-  const token = rt.db.createSession(u.member_id);
+  const token = await rt.db.createSession(u.member_id);
   setSessionCookie(event, token);
 
   return jsonOk({
@@ -81,7 +81,7 @@ export const POST: RequestHandler = async (event) => {
       full_name: u.full_name,
       role: u.role,
       theme: u.theme,
-      linkedGoogleEmail: rt.getLinkedGoogleEmail(u.member_id)
+      linkedGoogleEmail: await rt.getLinkedGoogleEmail(u.member_id)
     }
   });
 };

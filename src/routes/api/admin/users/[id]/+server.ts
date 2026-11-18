@@ -8,9 +8,9 @@ export const DELETE: RequestHandler = async ({ locals, params }) => {
   const id = decodeURIComponent(params.id);
   if (id === locals.user.member_id) return jsonFail(400, 'You cannot delete your own account.');
 
-  const r = locals.runtime.db.deleteUser(id);
+  const r = await locals.runtime.db.deleteUser(id);
   if (r === 'not_found') return jsonFail(404, 'User not found.');
   if (r === 'last_admin') return jsonFail(400, 'Cannot delete the last admin.');
 
-  return jsonOk({ users: locals.runtime.db.listUsers() });
+  return jsonOk({ users: await locals.runtime.db.listUsers() });
 };

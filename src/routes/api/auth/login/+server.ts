@@ -21,7 +21,7 @@ export const POST: RequestHandler = async (event) => {
   const u = id && typeof password === 'string' ? await rt.db.verifyPassword(id, password) : null;
 
   if (!u) {
-    const exists = id ? rt.db.getUser(id) : null;
+    const exists = id ? await rt.db.getUser(id) : null;
     return jsonFail(
       401,
       exists && !exists.pw_hash
@@ -30,7 +30,7 @@ export const POST: RequestHandler = async (event) => {
     );
   }
 
-  const token = rt.db.createSession(u.member_id);
+  const token = await rt.db.createSession(u.member_id);
   setSessionCookie(event, token);
 
   return jsonOk({ user: u });
