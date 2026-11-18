@@ -1,6 +1,7 @@
 <script lang="ts">
   import { baht, fmtDate, pct } from '$lib/format';
   import type { DashboardPayload } from '$lib/types';
+  import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
 
   let {
     dash,
@@ -47,6 +48,17 @@
     }
     return Array.from(set).sort();
   });
+
+  const typeSelectOptions = $derived<SelectOption[]>([
+    { value: 'all', label: `All types (${transactions.length})` },
+    { value: 'Expense', label: 'Expense' },
+    { value: 'Income', label: 'Income' }
+  ]);
+
+  const categorySelectOptions = $derived<SelectOption[]>([
+    { value: 'all', label: 'All categories' },
+    ...txCategoryOptions.map((cat) => ({ value: cat, label: cat }))
+  ]);
 
   const filteredTx = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -178,18 +190,23 @@
     </div>
 
     <div class="filter-actions">
-      <select id="txTypeFilter" aria-label="Filter by transaction type" bind:value={typeFilter}>
-        <option value="all">All types ({transactions.length})</option>
-        <option value="Expense">Expense</option>
-        <option value="Income">Income</option>
-      </select>
+      <SelectMenu
+        id="txTypeFilter"
+        ariaLabel="Filter by transaction type"
+        bind:value={typeFilter}
+        options={typeSelectOptions}
+        align="right"
+        size="md"
+      />
 
-      <select id="txCategoryFilter" aria-label="Filter by category" bind:value={categoryFilter}>
-        <option value="all">All categories</option>
-        {#each txCategoryOptions as cat (cat)}
-          <option value={cat}>{cat}</option>
-        {/each}
-      </select>
+      <SelectMenu
+        id="txCategoryFilter"
+        ariaLabel="Filter by category"
+        bind:value={categoryFilter}
+        options={categorySelectOptions}
+        align="right"
+        size="md"
+      />
     </div>
   </div>
 

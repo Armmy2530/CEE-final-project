@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fmtDate, initials } from '$lib/format';
   import type { DashboardMember, DashboardPayload } from '$lib/types';
+  import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
 
   let { dash }: { dash: DashboardPayload | null } = $props();
 
@@ -55,6 +56,23 @@
     }
     return Array.from(set).sort();
   });
+
+  const deptSelectOptions = $derived<SelectOption[]>([
+    { value: 'all', label: 'All departments' },
+    ...departments.map((d) => ({ value: d.name, label: `${d.name} (${d.count})` }))
+  ]);
+
+  const yearSelectOptions = $derived<SelectOption[]>([
+    { value: 'all', label: 'All years' },
+    ...yearEntries
+      .filter((y) => y.rawYear !== 'Unknown')
+      .map((y) => ({ value: y.rawYear, label: y.label }))
+  ]);
+
+  const statusSelectOptions = $derived<SelectOption[]>([
+    { value: 'all', label: 'All statuses' },
+    ...statusOptions.map((st) => ({ value: st, label: st }))
+  ]);
 
   const onLeaveCount = $derived.by(() => {
     return members.filter((m) => m.member_status.toLowerCase() === 'on leave').length;
@@ -199,28 +217,32 @@
     </div>
 
     <div class="filter-actions">
-      <select id="memberDeptFilter" aria-label="Filter by department" bind:value={deptFilter}>
-        <option value="all">All departments</option>
-        {#each departments as d (d.name)}
-          <option value={d.name}>{d.name} ({d.count})</option>
-        {/each}
-      </select>
+      <SelectMenu
+        id="memberDeptFilter"
+        ariaLabel="Filter by department"
+        bind:value={deptFilter}
+        options={deptSelectOptions}
+        align="right"
+        size="md"
+      />
 
-      <select id="memberYearFilter" aria-label="Filter by academic year" bind:value={yearFilter}>
-        <option value="all">All years</option>
-        {#each yearEntries as y (y.label)}
-          {#if y.rawYear !== 'Unknown'}
-            <option value={y.rawYear}>{y.label}</option>
-          {/if}
-        {/each}
-      </select>
+      <SelectMenu
+        id="memberYearFilter"
+        ariaLabel="Filter by academic year"
+        bind:value={yearFilter}
+        options={yearSelectOptions}
+        align="right"
+        size="md"
+      />
 
-      <select id="memberStatusFilter" aria-label="Filter by status" bind:value={statusFilter}>
-        <option value="all">All statuses</option>
-        {#each statusOptions as st (st)}
-          <option value={st}>{st}</option>
-        {/each}
-      </select>
+      <SelectMenu
+        id="memberStatusFilter"
+        ariaLabel="Filter by status"
+        bind:value={statusFilter}
+        options={statusSelectOptions}
+        align="right"
+        size="md"
+      />
     </div>
   </div>
 

@@ -1,8 +1,32 @@
 <script lang="ts">
-  import { buildMonthGrid, DOW_LABELS, getMonthTitle, shiftMonthStr } from '$lib/calendar';
+  import { browser } from '$app/environment';
+  import {
+    Calendar as SvarCalendar,
+    Willow,
+    WillowDark,
+    type CalendarInstanceApi,
+    type CellContext
+  } from '@svar-ui/svelte-calendar';
+  import {
+    formatLocalIso,
+    getMonthTitle,
+    parseLocalDate,
+    shiftMonthStr,
+    toSvarEvents
+  } from '$lib/calendar';
   import { addDayStr, baht, getDisplayStatus, type DisplayStatus } from '$lib/format';
-  import type { DashboardPayload, ProjectSummary } from '$lib/types';
+  import type { DashboardPayload, ProjectSummary, ThemeMode } from '$lib/types';
+  import CalendarTooltip from './CalendarTooltip.svelte';
+  import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
   import type { PageId } from './Topbar.svelte';
+
+  const SVAR_MONTH_VIEWS = ['month'];
+
+  const YEAR_OPTIONS: SelectOption[] = [
+    { value: 'all', label: 'Academic year 2026' },
+    { value: '2026', label: '2026 events only' },
+    { value: '2027', label: '2027 events only' }
+  ];
 
   let {
     dash,
@@ -10,6 +34,7 @@
     refreshing,
     firstName = 'Member',
     isAdmin = false,
+    theme = 'light',
     onRefresh,
     onOpenProject,
     onSelectPage,
@@ -20,9 +45,10 @@
     refreshing: boolean;
     firstName?: string;
     isAdmin?: boolean;
+    theme?: ThemeMode;
     onRefresh: () => void;
     onOpenProject: (eventId: string) => void;
-    onSelectPage: (page: PageId) => void;
+    onSelectPage?: (page: PageId) => void;
     onOpenSheetPicker?: () => void;
   } = $props();
 
@@ -155,44 +181,34 @@
     return Math.max(1, ...topParticipantEvents.map((e) => participantCount(e)));
   });
 
-  interface CalMilestone {
-    key: string;
-    event: ProjectSummary;
-    label: string;
-    status: DisplayStatus;
+  const svarEvents = $derived.by(() => toSvarEvents(scopedEvents));
+  const svarDate = $derived.by(() =>
+    parseLocalDate(calMonth ? `${calMonth}-01` : today || '2026-11-18')
+  );
+
+  function computeCellCss(ctx: CellContext): string {
+    if (!ctx.date) return '';
+    const iso = formatLocalIso(ctx.date);
+    return today && iso === today ? `club-cell-${iso} club-cell-today` : `club-cell-${iso}`;
   }
 
-  const milestonesByDate = $derived.by(() => {
-    const map: Record<string, CalMilestone[]> = {};
-    for (const ev of scopedEvents) {
-      const status = getDisplayStatus(ev, today);
-      if (ev.date) {
-        if (!map[ev.date]) map[ev.date] = [];
-        map[ev.date].push({
-          key: `${ev.event_id}-start`,
-          event: ev,
-          label: `${ev.event_id} starts`,
-          status
-        });
+  function initSvarApi(api: CalendarInstanceApi) {
+    api.intercept('select-event', (ev) => {
+      if (ev && 'id' in ev && ev.id != null) {
+        onOpenProject(String(ev.id));
       }
-      if (ev.end_date && ev.end_date !== ev.date) {
-        if (!map[ev.end_date]) map[ev.end_date] = [];
-        map[ev.end_date].push({
-          key: `${ev.event_id}-end`,
-          event: ev,
-          label: `${ev.event_id} ends`,
-          status
-        });
+      return false;
+    });
+    api.intercept('navigate-to', (ev) => {
+      if (ev && 'view' in ev && ev.view !== 'month') {
+        return false;
       }
-    }
-    return map;
-  });
-
-  const monthCells = $derived.by(() => {
-    if (!calMonth) return [];
-    const emptyMap = {};
-    return buildMonthGrid(calMonth, today, null, emptyMap);
-  });
+    });
+    api.intercept('add-event', () => false);
+    api.intercept('update-event', () => false);
+    api.intercept('move-event', () => false);
+    api.intercept('delete-event', () => false);
+  }
 
   interface UpcomingMilestone {
     event: ProjectSummary;
@@ -289,17 +305,15 @@
     </div>
 
     <div class="ac-head-controls">
-      <label class="ac-year-pill" aria-label="Filter by academic year">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-          <rect x="3" y="5" width="18" height="16" rx="2" />
-          <path d="M16 3v4M8 3v4M3 10h18" stroke-linecap="round" />
-        </svg>
-        <select bind:value={yearFilter}>
-          <option value="all">Academic year 2026</option>
-          <option value="2026">2026 events only</option>
-          <option value="2027">2027 events only</option>
-        </select>
-      </label>
+      <SelectMenu
+        id="summaryYearFilter"
+        ariaLabel="Filter by academic year"
+        leadingIcon="calendar"
+        size="md"
+        align="right"
+        bind:value={yearFilter}
+        options={YEAR_OPTIONS}
+      />
 
       {#if isAdmin && dash?.meta?.source === 'mock' && onOpenSheetPicker}
         <button type="button" class="ac-outline-btn" onclick={onOpenSheetPicker}>
@@ -501,54 +515,62 @@
               &#8250;
             </button>
           </div>
+          <button
+            type="button"
+            class="ac-cal-today-btn"
+            onclick={() => (calMonth = today.slice(0, 7))}
+          >
+            Today
+          </button>
         </div>
 
-        <div class="ac-cal-status-legend">
-          <span><i class="ac-dot done"></i>Done</span>
-          <span><i class="ac-dot processing"></i>Processing</span>
-          <span><i class="ac-dot waiting"></i>Waiting</span>
-        </div>
+        {#if onSelectPage}
+          <button
+            type="button"
+            class="ac-notify-link"
+            onclick={() => onSelectPage('calendar')}
+          >
+            Full calendar &rarr;
+          </button>
+        {/if}
       </div>
 
-      <div class="ac-mini-cal-scroll">
-        <div class="ac-mini-cal">
-          <div class="ac-mini-cal-dow">
-            {#each DOW_LABELS as d}
-              <span>{d}</span>
-            {/each}
+      <div class="svar-cal-wrapper is-compact">
+        {#if browser}
+          {#if theme === 'dark'}
+            <WillowDark fonts={false}>
+              <SvarCalendar
+                events={svarEvents}
+                view="month"
+                views={SVAR_MONTH_VIEWS}
+                date={svarDate}
+                toolbar={null}
+                readonly={true}
+                cellCss={computeCellCss}
+                tooltip={CalendarTooltip}
+                init={initSvarApi}
+              />
+            </WillowDark>
+          {:else}
+            <Willow fonts={false}>
+              <SvarCalendar
+                events={svarEvents}
+                view="month"
+                views={SVAR_MONTH_VIEWS}
+                date={svarDate}
+                toolbar={null}
+                readonly={true}
+                cellCss={computeCellCss}
+                tooltip={CalendarTooltip}
+                init={initSvarApi}
+              />
+            </Willow>
+          {/if}
+        {:else}
+          <div class="cal-ssr-placeholder">
+            <p class="muted">Loading calendar for {getMonthTitle(calMonth)}...</p>
           </div>
-          <div class="ac-mini-cal-grid">
-            {#each monthCells as cell (cell.key)}
-              {@const milestones = milestonesByDate[cell.key] ?? []}
-              <div class="ac-mini-cell" class:other={cell.other} class:today={cell.today}>
-                <span class="ac-mini-day" class:is-today={cell.today}>{cell.dayNum}</span>
-                {#if milestones.length}
-                  <div class="ac-mini-pills">
-                    {#each milestones.slice(0, 2) as m (m.key)}
-                      <button
-                        type="button"
-                        class={`ac-cal-pill ${statusTone(m.status)}`}
-                        title={`${m.event.title} (${m.label})`}
-                        onclick={() => onOpenProject(m.event.event_id)}
-                      >
-                        {m.label}
-                      </button>
-                    {/each}
-                    {#if milestones.length > 2}
-                      <button
-                        type="button"
-                        class="ac-cal-more"
-                        onclick={() => onSelectPage('calendar')}
-                      >
-                        +{milestones.length - 2} more
-                      </button>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        </div>
+        {/if}
       </div>
     </article>
 

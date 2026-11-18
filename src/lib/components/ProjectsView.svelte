@@ -9,6 +9,7 @@
   } from '$lib/format';
   import { rank } from '$lib/search';
   import type { DashboardPayload, ProjectSummary } from '$lib/types';
+  import SelectMenu, { type SelectOption } from './SelectMenu.svelte';
   import type { PageId } from './Topbar.svelte';
 
   let {
@@ -36,10 +37,22 @@
   let sortBy = $state<'newest' | 'oldest' | 'name' | 'relevance'>('newest');
   let visibleCount = $state(8);
   let groupBy = $state<'gender' | 'year' | 'major'>('year');
-  let displayDropOpen = $state(false);
   let showAllTx = $state(false);
   let showRoster = $state(false);
   let searchInput = $state<HTMLInputElement | null>(null);
+
+  const SORT_OPTIONS: SelectOption[] = [
+    { value: 'newest', label: 'Start date: newest' },
+    { value: 'oldest', label: 'Start date: oldest' },
+    { value: 'name', label: 'Name: A–Z' },
+    { value: 'relevance', label: 'Best match' }
+  ];
+
+  const GROUP_OPTIONS: SelectOption[] = [
+    { value: 'gender', label: 'Gender' },
+    { value: 'year', label: 'Year' },
+    { value: 'major', label: 'Major' }
+  ];
 
   const today = $derived(dash?.today || '2026-11-18');
 
@@ -202,22 +215,7 @@
   const displayedTransactions = $derived(
     showAllTx ? projectTransactions : projectTransactions.slice(0, 3)
   );
-
-  const GROUP_LABEL: Record<'gender' | 'year' | 'major', string> = {
-    gender: 'Gender',
-    year: 'Year',
-    major: 'Major'
-  };
-
-  function handleWindowClick(e: MouseEvent) {
-    const t = e.target as HTMLElement | null;
-    if (!t?.closest('.ac-display-by')) {
-      displayDropOpen = false;
-    }
-  }
 </script>
-
-<svelte:window onclick={handleWindowClick} />
 
 <section id="projects" class="ac-page">
   <div class="ac-projects-split">
@@ -246,12 +244,14 @@
 
       <div class="ac-proj-sort-row">
         <label for="projectSort">Sort by</label>
-        <select id="projectSort" bind:value={sortBy}>
-          <option value="newest">Start date: newest</option>
-          <option value="oldest">Start date: oldest</option>
-          <option value="name">Name: A–Z</option>
-          <option value="relevance">Best match</option>
-        </select>
+        <SelectMenu
+          id="projectSort"
+          ariaLabel="Sort projects by"
+          bind:value={sortBy}
+          options={SORT_OPTIONS}
+          align="right"
+          size="sm"
+        />
       </div>
 
       <div class="ac-proj-filter-tabs" role="tablist" aria-label="Filter projects by status">
@@ -513,48 +513,15 @@
                 </p>
               </div>
 
-              <div class="ac-display-by">
-                <button
-                  type="button"
-                  id="groupBy"
-                  class="ac-display-btn"
-                  aria-haspopup="true"
-                  aria-expanded={displayDropOpen}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    displayDropOpen = !displayDropOpen;
-                  }}
-                >
-                  <span>Display by <strong>{GROUP_LABEL[groupBy]}</strong></span>
-                  <span class="ac-display-caret" class:is-open={displayDropOpen} aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                      <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </span>
-                </button>
-
-                {#if displayDropOpen}
-                  <div class="ac-display-menu" role="radiogroup" aria-label="Display attendance by">
-                    {#each ['gender', 'year', 'major'] as opt}
-                      {@const active = groupBy === opt}
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        class="ac-display-opt"
-                        class:selected={active}
-                        onclick={() => {
-                          groupBy = opt as typeof groupBy;
-                          displayDropOpen = false;
-                        }}
-                      >
-                        <span class="ac-radio-dot" class:checked={active} aria-hidden="true"></span>
-                        <span>{GROUP_LABEL[opt as keyof typeof GROUP_LABEL]}</span>
-                      </button>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
+              <SelectMenu
+                id="groupBy"
+                ariaLabel="Display attendance by"
+                prefix="Display by"
+                bind:value={groupBy}
+                options={GROUP_OPTIONS}
+                align="right"
+                size="sm"
+              />
             </div>
 
             {#if !breakdownItems.length}
