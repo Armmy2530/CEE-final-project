@@ -400,8 +400,8 @@
                     Link Google account
                   </button>
                 {/if}
+                <div class="ac-menu-divider"></div>
               {/if}
-              <div class="ac-menu-divider"></div>
               <button
                 class="menu-item"
                 id="logoutBtn"

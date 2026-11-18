@@ -786,11 +786,9 @@ h1 {
 }
 
 .user-menu-google {
-  padding: 4px 10px 8px;
+  padding: 6px 10px 4px;
   font-size: 11px;
   color: var(--muted);
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
