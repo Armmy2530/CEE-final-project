@@ -7873,11 +7873,36 @@ body {
   }
   .mobile-bottom-nav {
     display: grid;
+    background: color-mix(in srgb, var(--ac-surface) 95%, transparent);
+    border-top: 1px solid var(--ac-border);
     padding: 5px 4px calc(5px + env(safe-area-inset-bottom, 0px));
   }
   .mobile-nav-item {
+    color: var(--ac-muted);
     font-size: 9.5px;
+    gap: 3px;
     padding: 5px 2px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .mobile-nav-item:hover {
+    color: var(--ac-ink);
+    background: var(--ac-cream);
+  }
+  .mobile-nav-item.active {
+    color: var(--ac-ochre);
+    background: var(--ac-ochre-soft);
+  }
+  .mobile-nav-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+  }
+  .mobile-nav-icon svg {
+    width: 18px;
+    height: 18px;
+    display: block;
   }
   .mobile-nav-item span:last-child {
     max-width: 100%;
