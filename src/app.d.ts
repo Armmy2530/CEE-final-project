@@ -7,6 +7,11 @@ declare global {
       user: SessionUser | null;
       runtime: AppRuntime;
     }
+
+    interface PageState {
+      page?: 'summary' | 'projects' | 'calendar' | 'members' | 'budget' | 'users';
+      projectId?: string | null;
+    }
   }
 }
 

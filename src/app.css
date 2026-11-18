@@ -2067,35 +2067,54 @@ h1 {
 
 .search-box {
   height: 38px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--ac-surface);
+  border: 1px solid var(--ac-border);
   border-radius: 8px;
   display: flex;
   align-items: center;
   padding: 0 12px;
-  gap: 8px;
-  width: 280px;
+  gap: 10px;
+  width: 320px;
   max-width: 100%;
+  transition: border-color 0.15s;
+}
+
+.search-box:focus-within {
+  border-color: var(--ac-border-strong);
+}
+
+.search-box svg {
+  width: 14px;
+  height: 14px;
+  color: var(--ac-muted);
+  flex: none;
 }
 
 .search-box > span {
-  font-size: 16px;
-  color: var(--muted);
+  font-size: 14px;
+  color: var(--ac-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
 }
 
 .search-box input {
   border: 0;
   outline: 0;
   width: 100%;
-  font-size: 13px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12.5px;
   background: none;
-  color: var(--ink);
+  color: var(--ac-ink);
   min-height: auto;
+  height: 100%;
   padding: 0;
 }
 
 .search-box input::placeholder {
-  color: var(--muted);
+  color: var(--ac-muted);
 }
 
 .filter-actions {
@@ -3696,9 +3715,19 @@ h1 {
 
 .cal-dropdown-caret {
   flex: 0 0 auto;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   color: var(--muted);
   transition: transform 0.15s;
+}
+
+.cal-dropdown-caret svg {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 
 .cal-dropdown.is-open .cal-dropdown-caret {
@@ -5941,8 +5970,23 @@ body {
 }
 
 .ac-caret {
-  font-size: 12px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  transition: transform 0.15s;
+}
+
+.ac-caret svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.ac-caret.is-open {
+  transform: rotate(180deg);
 }
 
 .ac-more-menu {
@@ -6054,8 +6098,24 @@ body {
 
 .ac-user-caret {
   color: var(--ac-muted);
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   margin-left: 2px;
+  flex: none;
+  transition: transform 0.15s;
+}
+
+.ac-user-caret svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+
+.ac-user-caret.is-open {
+  transform: rotate(180deg);
 }
 
 .user-menu-source {
@@ -7328,6 +7388,27 @@ body {
 .ac-display-btn strong {
   color: var(--ac-ink);
   font-weight: 600;
+}
+
+.ac-display-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: var(--ac-muted);
+  flex: none;
+  transition: transform 0.15s;
+}
+
+.ac-display-caret svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.ac-display-caret.is-open {
+  transform: rotate(180deg);
 }
 
 .ac-display-menu {
