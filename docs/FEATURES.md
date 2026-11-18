@@ -91,16 +91,16 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
   2. **Session Cookies:** Successful login generates a 32-byte random token; only its `SHA-256` hash is stored in the `sessions` table, while the cookie is set as `HttpOnly`, `SameSite=Lax`, and `Secure` (automatically enabled on HTTPS or `x-forwarded-proto: https`).
   3. **First-Time Password Setup (`/api/auth/setup`):** Pre-seeded student IDs (`6600000001`–`6600000067`) start without a password; users claim their seeded account by setting their initial password.
   4. **Linked-Only Google Sign-In (`/api/auth/google`):**
-     - When signed in, clicking **Link Google Account** in the profile menu stores a bidirectional mapping (`google_user_map:<email>` ↔ `user_google_email:<member_id>`) in `app_settings` (synced to Supabase).
+     - When signed in as an **admin**, clicking **Link Google account** in the top-right account menu (`#userMenu`) stores a bidirectional mapping (`google_user_map:<email>` ↔ `user_google_email:<member_id>`) in `app_settings` (synced to Supabase) and can be unlinked anytime via `DELETE /api/auth/google`.
+     - Normal users see a streamlined `#userMenu` containing only their identity, current data source status, and **Sign out** (no **Sync data now** or **Link Google account** buttons).
      - When signed out, **Sign in with Google** redirects through Supabase Google OAuth to `/auth/callback` and resolves the linked `member_id`. Unlinked Google emails are rejected (`403`) rather than creating unauthorized accounts.
-     - Users can unlink their Google email anytime via `DELETE /api/auth/google`.
 
 ---
 
 ## 7. User & Role Administration
 
-- **What it is:** Role-based access control (`admin` vs. `user`) with an admin-only **Users** management console (`Users`).
-- **Key files:** [`src/lib/components/UsersView.svelte`](../src/lib/components/UsersView.svelte), [`src/routes/api/admin/users/+server.ts`](../src/routes/api/admin/users/+server.ts), [`src/routes/api/admin/users/[id]/+server.ts`](../src/routes/api/admin/users/[id]/+server.ts), [`src/routes/api/admin/users/[id]/reset/+server.ts`](../src/routes/api/admin/users/[id]/reset/+server.ts)
+- **What it is:** Role-based access control (`admin` vs. `user`) with an admin-only **Users** management console (`Users`), opened from the top-right admin account menu (`#userMenu`).
+- **Key files:** [`src/lib/components/UsersView.svelte`](../src/lib/components/UsersView.svelte), [`src/lib/components/Topbar.svelte`](../src/lib/components/Topbar.svelte), [`src/routes/api/admin/users/+server.ts`](../src/routes/api/admin/users/+server.ts), [`src/routes/api/admin/users/[id]/+server.ts`](../src/routes/api/admin/users/[id]/+server.ts), [`src/routes/api/admin/users/[id]/reset/+server.ts`](../src/routes/api/admin/users/[id]/reset/+server.ts)
 - **How it works:**
   1. Account `6600000001` is automatically seeded and promoted to **`admin`** (see [ADR-0006](./adr/0006-idempotent-admin-seeding.md) & [ADR-0001](./adr/0001-mock-data-normalization.md)).
   2. Admins can view all accounts, create new users (`member_id`, `full_name`, `role`), reset user passwords back to uninitialized state, or delete non-self users. All admin endpoints enforce `locals.user.role === 'admin'`.
@@ -109,7 +109,7 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
 
 ## 8. Google Sheets & Drive Sheet Picker
 
-- **What it is:** An **admin-only** data source manager allowing dynamic switching between normalized Mock Data and live Google Sheets without restarting the server.
+- **What it is:** An **admin-only** data source manager (opened via **Data source** in `#userMenu` or **Connect Google Sheet** on the Summary page) allowing dynamic switching between normalized Mock Data and live Google Sheets without restarting the server.
 - **Key files:** [`src/lib/components/SheetPickerModal.svelte`](../src/lib/components/SheetPickerModal.svelte), [`src/lib/server/sheets.ts`](../src/lib/server/sheets.ts), [`src/routes/api/sheets/config/+server.ts`](../src/routes/api/sheets/config/+server.ts), [`src/routes/api/sheets/drive/+server.ts`](../src/routes/api/sheets/drive/+server.ts), [`src/routes/api/sheets/export-csv/+server.ts`](../src/routes/api/sheets/export-csv/+server.ts)
 - **How it works:**
   1. **Three Connection Modes:**
@@ -160,12 +160,11 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
 
 ## 12. Responsive Desktop, Vertical & Mobile Layout
 
-- **What it is:** Adaptive layout tuned for widescreen desktops, vertical/portrait monitors (`<= 1150px`), tablets (`<= 1024px`), and smartphones (`<= 768px` / `<= 480px`).
+- **What it is:** Adaptive topbar-driven layout tuned for widescreen desktops, vertical/portrait monitors (`<= 1120px` or `max-aspect-ratio: 4/5`), and mobile / scaled-vertical viewports (`<= 760px`).
 - **Key files:** [`src/app.css`](../src/app.css), [`src/lib/components/Topbar.svelte`](../src/lib/components/Topbar.svelte), [`src/routes/+page.svelte`](../src/routes/+page.svelte)
 - **How it works:**
-  1. **Desktop (`> 1024px`):** Fixed `247px` left sidebar rail paired with the main workspace and side-by-side Calendar + Inspector split layout.
-  2. **Vertical / Tablet (`<= 1024px`):** Sidebar collapses off-canvas and opens smoothly via the topbar hamburger menu (`#mobileMenuBtn`) with backdrop dismiss and Escape support; `.main-area` expands to `100%` width and grids stack cleanly.
-  3. **Mobile (`<= 900px`):** A fixed `.mobile-bottom-nav` bar gives 1-tap thumb navigation across views while floating chat and toast positions lift automatically above the bottom bar (`env(safe-area-inset-bottom)`).
+  1. **Desktop & Vertical/Portrait Monitors (`> 760px`):** Sticky `.ac-topbar` shell (no sidebar) with a **Summary** view-switcher dropdown (`Summary`, `Members`, `Budget`, `Events calendar`), **Project data** tab, single-button `#themeToggle`, notification bell, and `#userMenu`. Vertical/portrait displays (`<= 1120px` or `max-aspect-ratio: 4/5`) stack split grids cleanly while keeping topbar navigation active.
+  2. **Mobile & Scaled Vertical Viewports (`<= 760px`):** Topbar nav pills collapse and a fixed 5-tab `.mobile-bottom-nav` bar (`Summary`, `Projects`, `Calendar`, `Members`, `Budget` with semantic `24×24` stroke SVG icons) provides 1-tap thumb navigation while floating chat and toast positions lift automatically above the bottom bar (`env(safe-area-inset-bottom)`). Admins continue accessing **Users** and **Data source** from the top-right account menu (`#userMenu`).
 
 ---
 
