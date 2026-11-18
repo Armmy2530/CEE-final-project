@@ -13,9 +13,15 @@ import {
 import { createSource, type SheetConfig } from './sheets';
 import { createSupabaseClient, type SupabaseClient } from './supabase';
 import type { DbBackend, SupabaseStatus } from '../types';
+import {
+  STUDENT_ID_RE,
+  validPassword,
+  validatePassword,
+  validateStudentId
+} from '../validation';
 
-export const ID_RE = /^[A-Za-z0-9_-]{2,20}$/;
-export const validPassword = (p: unknown): p is string => typeof p === 'string' && p.length >= 8 && p.length <= 100;
+export const ID_RE = STUDENT_ID_RE;
+export { STUDENT_ID_RE, validPassword, validatePassword, validateStudentId };
 
 export function createLimiter(max: number, windowMs: number) {
   const hits = new Map<string, { n: number; reset: number }>();

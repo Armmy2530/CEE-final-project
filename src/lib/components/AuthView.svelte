@@ -1,8 +1,9 @@
 <script lang="ts">
   import { apiFetch } from '$lib/format';
+  import { validatePassword, validateStudentId } from '$lib/validation';
   import type { SessionUser } from '$lib/types';
 
-  type AuthMode = 'login' | 'setup' | 'register';
+  type AuthMode = 'login' | 'register';
 
   interface SetupLookup {
     found: boolean;
@@ -29,6 +30,7 @@
   let error = $state('');
   let busy = $state(false);
   let lookup = $state<SetupLookup | null>(null);
+  let lookupId = $state('');
   let lookupSeq = 0;
 
   $effect(() => {
@@ -39,8 +41,9 @@
 
   $effect(() => {
     const id = memberId.trim();
-    if (mode !== 'setup' || id.length < 3) {
+    if (mode !== 'register' || id.length < 2) {
       lookup = null;
+      lookupId = '';
       return;
     }
     const seq = ++lookupSeq;
@@ -52,15 +55,23 @@
         );
         if (seq === lookupSeq) {
           lookup = res;
+          lookupId = id;
         }
       } catch {
         if (seq === lookupSeq) {
           lookup = null;
+          lookupId = '';
         }
       }
     }, 180);
     return () => clearTimeout(timer);
   });
+
+  const activeLookup = $derived(lookup && lookupId === memberId.trim() ? lookup : null);
+  const foundPendingSetup = $derived(Boolean(activeLookup?.found && !activeLookup.alreadySetup));
+  const alreadyHasAccount = $derived(Boolean(activeLookup?.alreadySetup));
+  const trimmedId = $derived(memberId.trim());
+  const studentIdError = $derived(trimmedId ? validateStudentId(trimmedId) : null);
 
   const hasMinLen = $derived(password.length >= 8);
   const hasNumber = $derived(/\d/.test(password));
@@ -76,37 +87,31 @@
   });
 
   const heroHeading = $derived(
-    mode === 'login'
-      ? 'Everything your club does, in one place.'
-      : mode === 'setup'
-        ? 'Welcome to the club hub.'
-        : 'Join the Academic AC hub.'
+    mode === 'login' ? 'Everything your club does, in one place.' : 'Join the Academic AC hub.'
   );
 
   const heroCopy = $derived(
     mode === 'login'
       ? 'Track activities, budgets and members for the Engineering Academic Club.'
-      : mode === 'setup'
-        ? 'Your student ID is already on the member list. Set a password once and you are ready to go.'
-        : 'Register an account to follow upcoming activities, attendance records, and budgets.'
+      : foundPendingSetup
+        ? 'Your student ID is already on the member list. Create a password once and you are ready to go.'
+        : 'Sign up with your student ID to follow upcoming activities, attendance records, and budgets.'
   );
 
-  const title = $derived(
-    mode === 'login' ? 'Welcome back' : mode === 'setup' ? 'Create your password' : 'Create account'
-  );
+  const title = $derived(mode === 'login' ? 'Welcome back' : 'Sign up');
   const subtitle = $derived(
     mode === 'login'
       ? 'Sign in with your student ID to continue.'
-      : mode === 'setup'
-        ? 'First time signing in? Choose a password for your account.'
-        : 'Create a new account to access the Engineering Academic Club dashboard.'
+      : foundPendingSetup
+        ? 'We found your profile in the database. Choose a password to activate your account.'
+        : 'Enter your 10-digit student ID. Existing club members only need to create a password.'
   );
   const pwLabel = $derived(mode === 'login' ? 'Password' : 'New password');
   const submitLabel = $derived(
     mode === 'login'
       ? 'Sign in'
-      : mode === 'setup'
-        ? 'Save password & sign in'
+      : foundPendingSetup
+        ? 'Create password & sign in'
         : 'Sign up & sign in'
   );
 
@@ -117,6 +122,10 @@
     confirm = '';
     showPw = false;
     showConfirmPw = false;
+    if (m === 'login') {
+      lookup = null;
+      lookupId = '';
+    }
   }
 
   async function handleSubmit(ev: SubmitEvent) {
@@ -125,17 +134,44 @@
     const id = memberId.trim();
     const name = fullName.trim();
 
-    if (!id || !password) {
+    if (!id || (mode === 'login' && !password)) {
       error = 'Please enter your student ID and password.';
       return;
     }
-    if (mode === 'register' && !name) {
-      error = 'Please enter your full name.';
-      return;
+
+    let currentLookup = activeLookup;
+    if (mode === 'register' && !currentLookup && id.length >= 2) {
+      try {
+        currentLookup = await apiFetch<SetupLookup>(
+          'GET',
+          `/api/auth/setup?member_id=${encodeURIComponent(id)}`
+        );
+        lookup = currentLookup;
+        lookupId = id;
+      } catch {
+        currentLookup = null;
+      }
     }
-    if (mode !== 'login') {
-      if (password.length < 8) {
-        error = 'Password must be at least 8 characters.';
+
+    if (mode === 'register') {
+      if (currentLookup?.alreadySetup) {
+        error = 'This student ID already has a password. Please sign in instead.';
+        return;
+      }
+      if (!currentLookup?.found) {
+        const idErr = validateStudentId(id);
+        if (idErr) {
+          error = idErr;
+          return;
+        }
+        if (!name) {
+          error = 'Please enter your full name.';
+          return;
+        }
+      }
+      const pwErr = validatePassword(password);
+      if (pwErr) {
+        error = pwErr;
         return;
       }
       if (password !== confirm) {
@@ -146,14 +182,11 @@
 
     busy = true;
     try {
+      const isSetup = mode === 'register' && Boolean(currentLookup?.found && !currentLookup.alreadySetup);
       const endpoint =
-        mode === 'login'
-          ? '/api/auth/login'
-          : mode === 'setup'
-            ? '/api/auth/setup'
-            : '/api/auth/register';
+        mode === 'login' ? '/api/auth/login' : isSetup ? '/api/auth/setup' : '/api/auth/register';
       const payload =
-        mode === 'register'
+        mode === 'register' && !isSetup
           ? { member_id: id, full_name: name, password }
           : { member_id: id, password };
       const res = await apiFetch<{ user: SessionUser }>('POST', endpoint, payload);
@@ -223,20 +256,6 @@
           <small>members</small>
         </div>
       </div>
-
-      <div class="auth-mini-stat">
-        <span class="auth-stat-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-            <rect x="3" y="6" width="18" height="13" rx="2" />
-            <path d="M3 10h18" />
-            <path d="M16 14h2" stroke-linecap="round" />
-          </svg>
-        </span>
-        <div>
-          <strong>฿384,500</strong>
-          <small>budget</small>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -263,13 +282,14 @@
           class="auth-input"
           name="member_id"
           autocomplete="username"
+          inputmode={mode === 'register' ? 'numeric' : 'text'}
           autocapitalize="characters"
-          placeholder="e.g. 6600000001"
+          placeholder={mode === 'register' ? '10-digit student ID (e.g. 6600000001)' : 'e.g. 6600000001'}
           bind:value={memberId}
           required
         />
 
-        {#if mode === 'setup' && lookup?.found && !lookup.alreadySetup}
+        {#if mode === 'register' && foundPendingSetup}
           <div class="account-found-card" role="status">
             <span class="account-found-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -278,22 +298,27 @@
               </svg>
             </span>
             <div>
-              <strong>Account found</strong>
+              <strong>Found in database</strong>
               <small>
-                {lookup.full_name}{lookup.subtitle ? ` · ${lookup.subtitle}` : ''}
+                {activeLookup?.full_name}{activeLookup?.subtitle ? ` · ${activeLookup.subtitle}` : ''}
               </small>
             </div>
           </div>
-        {:else if mode === 'setup' && lookup?.alreadySetup}
+        {:else if mode === 'register' && alreadyHasAccount}
           <p class="auth-inline-note">
             This student ID already has a password.
             <button type="button" class="auth-inline-link" onclick={() => setMode('login')}>
               Sign in instead
             </button>
           </p>
-        {/if}
-
-        {#if mode === 'register'}
+        {:else if mode === 'register'}
+          {#if trimmedId}
+            <p class="auth-field-hint" class:is-error={Boolean(studentIdError)} class:is-ok={!studentIdError}>
+              {studentIdError ? studentIdError : '✓ Valid 10-digit student ID'}
+            </p>
+          {:else}
+            <p class="auth-field-hint">Must be 10 digits (numbers 0–9 only, e.g. 6600000001).</p>
+          {/if}
           <label class="auth-label" for="authName">Full name</label>
           <input
             id="authName"
@@ -393,34 +418,30 @@
           <p id="authError" class="form-error" role="alert">{error}</p>
         {/if}
 
-        <button id="authSubmit" class="auth-submit-btn" type="submit" disabled={busy}>
+        <button
+          id="authSubmit"
+          class="auth-submit-btn"
+          type="submit"
+          disabled={busy || (mode === 'register' && alreadyHasAccount)}
+        >
           {submitLabel}
         </button>
       </form>
 
       {#if mode === 'login'}
         <p class="auth-switch-row">
-          First time here?
+          New here or first time setting a password?
           <button
             type="button"
-            id="modeSetup"
+            id="modeRegister"
             class="auth-inline-link"
-            onclick={() => setMode('setup')}
+            onclick={() => setMode('register')}
           >
-            Create your password
+            Sign up
           </button>
         </p>
 
         <div class="auth-alt-actions">
-          <button
-            type="button"
-            id="modeRegister"
-            class="auth-ghost-btn"
-            onclick={() => setMode('register')}
-          >
-            New member? Sign up
-          </button>
-          <span class="auth-alt-dot" aria-hidden="true">&middot;</span>
           <button
             id="googleAuthBtn"
             type="button"
