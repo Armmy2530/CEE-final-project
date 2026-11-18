@@ -25,7 +25,7 @@ export const POST: RequestHandler = async (event) => {
     return jsonFail(
       401,
       exists && !exists.pw_hash
-        ? 'This account has no password yet. Use "First time? Set password".'
+        ? 'This account has no password yet. Use "Sign up" to create your password.'
         : 'Wrong ID or password.'
     );
   }

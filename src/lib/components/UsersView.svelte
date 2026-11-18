@@ -41,7 +41,7 @@
     try {
       const r = await apiFetch<{ users: PublicUser[] }>('POST', '/api/admin/users', body);
       users = r.users;
-      note = `Added ${body.member_id}. They can now use "First time? Set password".`;
+      note = `Added ${body.member_id}. They can now use "Sign up" to create their password.`;
       noteErr = false;
       newId = '';
       newName = '';
