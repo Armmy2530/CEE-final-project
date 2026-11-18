@@ -8,6 +8,8 @@ Web dashboard for a student club committee built with **Bun + SvelteKit 2 (Svelt
 
 ## Features
 
+> For a detailed breakdown of every feature—what it is, relevant source files, and how it works internally—see [**Feature Documentation (`docs/FEATURES.md`)**](./docs/FEATURES.md).
+
 | Area | What it does |
 |---|---|
 | **Summary** | Executive KPI cards (members, active retention, events, planned vs. actual budget), interactive attendance & budget charts with legend toggles, top expense categories, upcoming events, active projects, and CSV report export. |
@@ -191,6 +193,7 @@ src/
                            /auth/{login,logout,register,setup,google},
                            /sheets/{config,drive,export-csv}, /admin/users/*)
 docs/
+  FEATURES.md              Detailed documentation of every feature and how it works
   adr/                     Architecture Decision Records (0001–0011)
   images/                  Dashboard preview screenshots
 sample-sheets/             Members.csv, Events.csv, Attendance.csv, Budget.csv,
