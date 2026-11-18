@@ -1,6 +1,6 @@
 <script lang="ts">
   import { apiFetch } from '$lib/format';
-  import { validatePassword } from '$lib/validation';
+  import { validatePassword, validateStudentId } from '$lib/validation';
   import type { SessionUser } from '$lib/types';
 
   type AuthMode = 'login' | 'register';
@@ -70,6 +70,8 @@
   const activeLookup = $derived(lookup && lookupId === memberId.trim() ? lookup : null);
   const foundPendingSetup = $derived(Boolean(activeLookup?.found && !activeLookup.alreadySetup));
   const alreadyHasAccount = $derived(Boolean(activeLookup?.alreadySetup));
+  const trimmedId = $derived(memberId.trim());
+  const studentIdError = $derived(trimmedId ? validateStudentId(trimmedId) : null);
 
   const hasMinLen = $derived(password.length >= 8);
   const hasNumber = $derived(/\d/.test(password));
@@ -132,7 +134,7 @@
     const id = memberId.trim();
     const name = fullName.trim();
 
-    if (!id || !password) {
+    if (!id || (mode === 'login' && !password)) {
       error = 'Please enter your student ID and password.';
       return;
     }
@@ -156,9 +158,16 @@
         error = 'This student ID already has a password. Please sign in instead.';
         return;
       }
-      if (!currentLookup?.found && !name) {
-        error = 'Please enter your full name.';
-        return;
+      if (!currentLookup?.found) {
+        const idErr = validateStudentId(id);
+        if (idErr) {
+          error = idErr;
+          return;
+        }
+        if (!name) {
+          error = 'Please enter your full name.';
+          return;
+        }
       }
       const pwErr = validatePassword(password);
       if (pwErr) {
@@ -273,8 +282,9 @@
           class="auth-input"
           name="member_id"
           autocomplete="username"
+          inputmode={mode === 'register' ? 'numeric' : 'text'}
           autocapitalize="characters"
-          placeholder="e.g. 6600000001"
+          placeholder={mode === 'register' ? '10-digit student ID (e.g. 6600000001)' : 'e.g. 6600000001'}
           bind:value={memberId}
           required
         />
@@ -302,6 +312,13 @@
             </button>
           </p>
         {:else if mode === 'register'}
+          {#if trimmedId}
+            <p class="auth-field-hint" class:is-error={Boolean(studentIdError)} class:is-ok={!studentIdError}>
+              {studentIdError ? studentIdError : '✓ Valid 10-digit student ID'}
+            </p>
+          {:else}
+            <p class="auth-field-hint">Must be 10 digits (numbers 0–9 only, e.g. 6600000001).</p>
+          {/if}
           <label class="auth-label" for="authName">Full name</label>
           <input
             id="authName"

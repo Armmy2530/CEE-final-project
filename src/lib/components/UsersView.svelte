@@ -1,5 +1,6 @@
 <script lang="ts">
   import { apiFetch } from '$lib/format';
+  import { validateStudentId } from '$lib/validation';
   import type { PublicUser, SessionUser, UserRole } from '$lib/types';
 
   let { currentUser }: { currentUser: SessionUser } = $props();
@@ -11,6 +12,9 @@
   let note = $state('');
   let noteErr = $state(false);
   let busy = $state(false);
+
+  const trimmedNewId = $derived(newId.trim());
+  const newIdError = $derived(trimmedNewId ? validateStudentId(trimmedNewId) : null);
 
   export async function loadUsers() {
     if (currentUser.role !== 'admin') return;
@@ -32,8 +36,14 @@
   async function addUser(ev: SubmitEvent) {
     ev.preventDefault();
     const body = { member_id: newId.trim(), full_name: newName.trim(), role: newRole };
-    if (!body.member_id || !body.full_name) {
-      note = 'Enter both an ID and a name.';
+    const idErr = validateStudentId(body.member_id);
+    if (idErr) {
+      note = idErr;
+      noteErr = true;
+      return;
+    }
+    if (!body.full_name) {
+      note = 'Enter the member full name.';
       noteErr = true;
       return;
     }
@@ -92,7 +102,7 @@
       <p class="eyebrow">MANAGE <span class="heading-dot">&middot;</span> USERS</p>
       <h1>Users</h1>
       <p class="subheading">
-        Admins can add and remove accounts. New users create their own password at first sign-in.
+        Admins can add and remove accounts. New users create their own password via Sign up.
       </p>
     </div>
   </div>
@@ -101,8 +111,14 @@
     <h2 style="font-size:15px;margin-bottom:14px">Add user</h2>
     <form id="addUserForm" class="inline-form" novalidate onsubmit={addUser}>
       <div>
-        <label for="newId">Member ID</label>
-        <input id="newId" placeholder="e.g. 6600000068" bind:value={newId} required />
+        <label for="newId">Student ID (10 digits)</label>
+        <input
+          id="newId"
+          inputmode="numeric"
+          placeholder="e.g. 6600000068"
+          bind:value={newId}
+          required
+        />
       </div>
       <div>
         <label for="newName">Full name</label>
@@ -117,6 +133,13 @@
       </div>
       <button class="btn primary" type="submit" disabled={busy}>Add user</button>
     </form>
+    {#if trimmedNewId}
+      <p class="auth-field-hint" class:is-error={Boolean(newIdError)} class:is-ok={!newIdError}>
+        {newIdError ? newIdError : '✓ Valid 10-digit student ID'}
+      </p>
+    {:else}
+      <p class="auth-field-hint">Student ID must be 10 digits (numbers 0–9 only, e.g. 6600000068).</p>
+    {/if}
     {#if note}
       <p id="userMsg" class="form-note" class:err={noteErr} role="status">{note}</p>
     {/if}

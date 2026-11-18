@@ -13,10 +13,15 @@ import {
 import { createSource, type SheetConfig } from './sheets';
 import { createSupabaseClient, type SupabaseClient } from './supabase';
 import type { DbBackend, SupabaseStatus } from '../types';
-import { validPassword, validatePassword } from '../validation';
+import {
+  STUDENT_ID_RE,
+  validPassword,
+  validatePassword,
+  validateStudentId
+} from '../validation';
 
-export const ID_RE = /^[A-Za-z0-9_-]{2,20}$/;
-export { validPassword, validatePassword };
+export const ID_RE = STUDENT_ID_RE;
+export { STUDENT_ID_RE, validPassword, validatePassword, validateStudentId };
 
 export function createLimiter(max: number, windowMs: number) {
   const hits = new Map<string, { n: number; reset: number }>();

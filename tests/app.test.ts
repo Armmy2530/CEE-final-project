@@ -709,9 +709,26 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       const ssrPage = await call('GET', '/', undefined, login.cookie);
       expect(ssrPage.text).toContain('<html data-theme="dark">');
 
-      // Public Sign up (/api/auth/register) enforces uppercase + number
-      const regNoUpper = await call('POST', '/api/auth/register', {
+      // Public Sign up (/api/auth/register) enforces 10-digit student ID + password rules
+      const regBadAlpha = await call('POST', '/api/auth/register', {
         member_id: 'REG-001',
+        full_name: 'Registered Evaluator',
+        password: 'Evaluator123'
+      });
+      expect(regBadAlpha.status).toBe(400);
+      expect(regBadAlpha.body.error).toContain('digits only');
+
+      const regBadLen = await call('POST', '/api/auth/register', {
+        member_id: '66000001',
+        full_name: 'Registered Evaluator',
+        password: 'Evaluator123'
+      });
+      expect(regBadLen.status).toBe(400);
+      expect(regBadLen.body.error).toContain('10 digits');
+      expect(regBadLen.body.error).toContain('currently 8 digits');
+
+      const regNoUpper = await call('POST', '/api/auth/register', {
+        member_id: '6600009001',
         full_name: 'Registered Evaluator',
         password: 'evaluator123'
       });
@@ -719,7 +736,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       expect(regNoUpper.body.error).toContain('uppercase');
 
       const reg = await call('POST', '/api/auth/register', {
-        member_id: 'REG-001',
+        member_id: '6600009001',
         full_name: 'Registered Evaluator',
         password: 'Evaluator123'
       });
@@ -729,7 +746,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       expect(
         (
           await call('POST', '/api/auth/register', {
-            member_id: 'REG-001',
+            member_id: '6600009001',
             full_name: 'Dup',
             password: 'Evaluator123'
           })
@@ -754,16 +771,24 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
           )
         ).status
       ).toBe(409);
-      expect(
-        (
-          await call(
-            'POST',
-            '/api/admin/users',
-            { member_id: 'bad id!', full_name: 'X', role: 'user' },
-            login.cookie
-          )
-        ).status
-      ).toBe(400);
+      const adminBadAlpha = await call(
+        'POST',
+        '/api/admin/users',
+        { member_id: 'bad id!', full_name: 'X', role: 'user' },
+        login.cookie
+      );
+      expect(adminBadAlpha.status).toBe(400);
+      expect(adminBadAlpha.body.error).toContain('digits only');
+
+      const adminBadLen = await call(
+        'POST',
+        '/api/admin/users',
+        { member_id: '660009999', full_name: 'X', role: 'user' },
+        login.cookie
+      );
+      expect(adminBadLen.status).toBe(400);
+      expect(adminBadLen.body.error).toContain('10 digits');
+      expect(adminBadLen.body.error).toContain('currently 9 digits');
 
       // Normal user cannot call admin endpoints
       const u = await call('POST', '/api/auth/setup', { member_id: '6600009999', password: 'UserPass99' });
