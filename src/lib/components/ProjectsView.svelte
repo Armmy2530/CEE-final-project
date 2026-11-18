@@ -550,21 +550,23 @@
             {#if !breakdownItems.length}
               <p class="ac-pd-empty-chart">No attendance records for {ev.event_id} yet.</p>
             {:else}
-              <div class="ac-pd-vchart" class:compact-labels={groupBy === 'major'}>
-                <div class="ac-pd-vchart-grid" aria-hidden="true">
-                  <span></span><span></span><span></span><span></span>
-                </div>
-                <div class="ac-pd-vchart-cols">
-                  {#each breakdownItems as item (item.label)}
-                    {@const h = Math.max(4, Math.round((item.value / breakdownMax) * 100))}
-                    <div class="ac-pd-col" title={`${item.label}: ${item.value}`}>
-                      <span class="ac-pd-val">{item.value}</span>
-                      <div class="ac-pd-bar-rail">
-                        <span class="ac-pd-bar-fill ochre" style={`height:${h}%`}></span>
+              <div class="ac-pd-vchart-scroll" class:is-compact={groupBy === 'major'}>
+                <div class="ac-pd-vchart" class:compact-labels={groupBy === 'major'}>
+                  <div class="ac-pd-vchart-grid" aria-hidden="true">
+                    <span></span><span></span><span></span><span></span>
+                  </div>
+                  <div class="ac-pd-vchart-cols">
+                    {#each breakdownItems as item (item.label)}
+                      {@const h = Math.max(4, Math.round((item.value / breakdownMax) * 100))}
+                      <div class="ac-pd-col" title={`${item.label}: ${item.value}`}>
+                        <span class="ac-pd-val">{item.value}</span>
+                        <div class="ac-pd-bar-rail">
+                          <span class="ac-pd-bar-fill ochre" style={`height:${h}%`}></span>
+                        </div>
+                        <small>{item.shortLabel}</small>
                       </div>
-                      <small>{item.shortLabel}</small>
-                    </div>
-                  {/each}
+                    {/each}
+                  </div>
                 </div>
               </div>
             {/if}

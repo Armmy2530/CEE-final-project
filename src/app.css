@@ -6414,6 +6414,12 @@ body {
   min-width: 0;
 }
 
+.ac-vchart-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .ac-vchart-gridlines {
   position: absolute;
   inset: 0 0 24px 0;
@@ -6489,11 +6495,12 @@ body {
 
 .ac-bar-tooltip {
   position: absolute;
-  bottom: calc(100% - 14px);
+  top: 6px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 15;
-  min-width: 170px;
+  min-width: 168px;
+  max-width: 220px;
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--ac-surface);
@@ -6502,6 +6509,17 @@ body {
   text-align: left;
   font-size: 11px;
   pointer-events: none;
+}
+
+.ac-bar-group.edge-left .ac-bar-tooltip {
+  left: 0;
+  transform: none;
+}
+
+.ac-bar-group.edge-right .ac-bar-tooltip {
+  left: auto;
+  right: 0;
+  transform: none;
 }
 
 .ac-bar-tooltip strong {
@@ -7624,10 +7642,97 @@ body {
   background: var(--ac-ochre-hover);
 }
 
-/* ---------- Responsive Academic AC Layout ---------- */
-@media (max-width: 1040px) {
+/* ---------- Responsive Academic AC Layout (Desktop, Vertical Monitor, Mobile) ---------- */
+.ac-shell,
+.auth-split {
+  overflow-x: clip;
+}
+
+.ac-main-wrap,
+.ac-page,
+.ac-card {
+  min-width: 0;
+}
+
+.ac-mini-cal-scroll {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Override legacy 900px mobile-bottom-nav show rule above 760px so vertical monitors use topbar nav only */
+@media (max-width: 900px) and (min-width: 761px) {
+  .mobile-bottom-nav {
+    display: none;
+  }
+  .assistant-fab.ac-ai-pill {
+    right: 22px;
+    bottom: 24px;
+  }
+  .assistant-panel {
+    right: 22px;
+    left: auto;
+    width: 360px;
+    bottom: 80px;
+    max-height: calc(100dvh - 110px);
+  }
+  .toasts {
+    left: 24px;
+    right: auto;
+    bottom: 20px;
+  }
+}
+
+/* Vertical monitors & portrait desktop/tablet viewports (<= 1120px or tall portrait up to 1200px) */
+@media (max-width: 1120px), (max-aspect-ratio: 4 / 5) and (max-width: 1200px) {
+  .auth-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .auth-hero-panel {
+    padding: 28px 32px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ac-border);
+    gap: 20px;
+  }
+  .auth-hero-center {
+    max-width: 620px;
+    margin: 0;
+    padding: 6px 0;
+  }
+  .auth-stats-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .auth-mini-stat {
+    min-width: 0;
+  }
+  .auth-form-panel {
+    padding: 36px 24px 48px;
+    align-content: start;
+  }
   .ac-projects-split {
-    grid-template-columns: 290px minmax(0, 1fr);
+    grid-template-columns: 1fr;
+  }
+  .ac-proj-sidebar {
+    position: static;
+  }
+  .ac-proj-items {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    max-height: 250px;
+  }
+  .ac-proj-item {
+    border: 1px solid var(--ac-border);
+  }
+}
+
+@media (max-width: 1080px) {
+  .ac-main-wrap {
+    padding: 22px 20px 68px;
+  }
+  .ac-topbar-inner {
+    padding: 0 20px;
   }
   .ac-mid-grid,
   .ac-bot-grid {
@@ -7635,58 +7740,250 @@ body {
   }
 }
 
-@media (max-width: 900px) {
-  .auth-split {
-    grid-template-columns: 1fr;
+@media (max-width: 860px) {
+  .ac-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .auth-hero-panel {
-    padding: 28px 24px;
-    border-right: 0;
-    border-bottom: 1px solid var(--ac-border);
+  .ac-kpi-grid > :nth-child(3) {
+    grid-column: 1 / -1;
   }
-  .auth-hero-center {
-    padding: 24px 0;
-  }
-  .ac-projects-split,
   .ac-pd-grid-2 {
     grid-template-columns: 1fr;
   }
-  .ac-proj-sidebar {
-    position: static;
-  }
-  .ac-main-wrap {
-    padding: 20px 16px calc(92px + env(safe-area-inset-bottom, 0px));
-  }
-  .assistant-fab.ac-ai-pill {
-    right: 14px;
-    bottom: calc(74px + env(safe-area-inset-bottom, 0px));
-  }
 }
 
-@media (max-width: 720px) {
+/* Mobile displays (<= 760px) */
+@media (max-width: 760px) {
+  .ac-topbar {
+    height: 56px;
+  }
   .ac-topbar-inner {
-    padding: 0 14px;
+    padding: 0 12px;
+    gap: 8px;
+  }
+  .ac-topbar-left {
+    gap: 10px;
+  }
+  .ac-top-word {
+    font-size: 12px;
   }
   .ac-top-nav {
     display: none;
   }
+  .ac-top-actions {
+    gap: 6px;
+  }
   .ac-user-meta {
     display: none;
+  }
+  .ac-user-pill {
+    padding: 0 7px 0 5px;
+    gap: 5px;
+  }
+  .ac-main-wrap {
+    padding: 16px 12px calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+  .ac-page-head {
+    align-items: flex-start;
+  }
+  .ac-page-head h1 {
+    font-size: 22px;
+  }
+  .ac-head-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .ac-year-pill,
+  .ac-outline-btn {
+    flex: 1 1 auto;
+    justify-content: center;
   }
   .ac-kpi-grid,
   .ac-pd-facts {
     grid-template-columns: 1fr;
   }
-  .ac-mini-cell {
-    min-height: 54px;
-    padding: 4px;
+  .ac-kpi-grid > :nth-child(3) {
+    grid-column: auto;
   }
-  .ac-cal-pill {
-    font-size: 9px;
-    padding: 1px 3px;
+  .ac-kpi-card {
+    min-height: auto;
+    padding: 15px 16px;
   }
-  .ac-vchart-bars {
+  .ac-kpi-value {
+    font-size: 24px;
+    margin: 8px 0 6px;
+  }
+  .ac-kpi-split-foot {
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+  .ac-chart-card,
+  .ac-cal-card,
+  .ac-upcoming-card,
+  .ac-pd-hero,
+  .ac-pd-subcard,
+  .ac-pd-tx-card {
+    padding: 15px 14px;
+  }
+  .ac-vchart-wrap {
+    height: 225px;
+  }
+  .ac-vchart-plot {
     overflow-x: auto;
-    grid-auto-columns: minmax(42px, 1fr);
+    -webkit-overflow-scrolling: touch;
+  }
+  .ac-vchart-canvas {
+    min-width: 440px;
+  }
+  .ac-mini-cal-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ac-mini-cal {
+    min-width: 520px;
+  }
+  .ac-mini-cell {
+    min-height: 60px;
+    padding: 5px;
+  }
+  .ac-proj-items {
+    grid-template-columns: 1fr;
+    max-height: 225px;
+  }
+  .ac-pd-hero-top h1 {
+    font-size: 20px;
+  }
+  .ac-pd-roster-nums {
+    flex-wrap: wrap;
+    gap: 18px 28px;
+  }
+  .ac-pd-vchart-scroll.is-compact {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ac-pd-vchart-scroll.is-compact .ac-pd-vchart.compact-labels {
+    min-width: 480px;
+  }
+  .ac-pd-budget-chart {
+    padding: 0 8px;
+    gap: 14px;
+  }
+  .ac-tx-table {
+    min-width: 430px;
+  }
+  .mobile-bottom-nav {
+    display: grid;
+    padding: 5px 4px calc(5px + env(safe-area-inset-bottom, 0px));
+  }
+  .mobile-nav-item {
+    font-size: 9.5px;
+    padding: 5px 2px;
+  }
+  .mobile-nav-item span:last-child {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .assistant-fab.ac-ai-pill {
+    right: 12px;
+    bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+    height: 38px;
+    padding: 0 14px;
+    font-size: 12px;
+  }
+  .assistant-panel {
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-width: none;
+    bottom: calc(114px + env(safe-area-inset-bottom, 0px));
+    height: min(440px, calc(100dvh - 175px));
+    max-height: calc(100dvh - 175px);
+  }
+  .toasts {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  }
+  .auth-input,
+  .ac-proj-search input,
+  .assistant-input input,
+  input,
+  select {
+    font-size: 16px;
+  }
+  .ac-year-pill select,
+  .ac-proj-sort-row select {
+    font-size: 13px;
   }
 }
+
+@media (max-width: 560px) {
+  .auth-hero-panel {
+    padding: 20px 16px;
+    gap: 14px;
+  }
+  .auth-hero-center h1 {
+    font-size: 24px;
+    margin-bottom: 8px;
+  }
+  .auth-stats-row {
+    gap: 8px;
+  }
+  .auth-mini-stat {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 10px;
+  }
+  .auth-form-panel {
+    padding: 24px 16px 36px;
+  }
+  .ac-hbar-row {
+    grid-template-columns: 1fr;
+    text-align: left;
+    gap: 4px;
+    padding: 4px 2px;
+  }
+  .notif-panel,
+  .top-user-menu {
+    position: fixed;
+    top: 62px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+  }
+  .modal-backdrop {
+    padding: 10px;
+  }
+  .modal-card {
+    padding: 16px;
+    max-height: calc(100dvh - 20px);
+  }
+  .drive-token-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 390px) {
+  .auth-stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .auth-stats-row > :nth-child(3) {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+  }
+  .ac-proj-filter-tabs {
+    overflow-x: auto;
+  }
+  .ac-filter-tab {
+    flex: none;
+    padding: 5px 8px;
+  }
+}
+

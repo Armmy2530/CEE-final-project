@@ -406,40 +406,44 @@
           {/each}
         </div>
         <div class="ac-vchart-plot">
-          <div class="ac-vchart-gridlines" aria-hidden="true">
-            {#each budgetTicks as _}
-              <span></span>
-            {/each}
-          </div>
-          <div class="ac-vchart-bars">
-            {#each budgetChartEvents as ev, i (ev.event_id)}
-              {@const hp = Math.min(100, Math.round((ev.budget_planned / budgetChartMax) * 100))}
-              {@const ha = Math.min(100, Math.round((ev.actual / budgetChartMax) * 100))}
-              <button
-                type="button"
-                class="ac-bar-group"
-                aria-label={`${ev.event_id} ${ev.title}: Planned ${baht(ev.budget_planned)}, Actual ${baht(ev.actual)}`}
-                onmouseenter={() => (hoveredBudgetIdx = i)}
-                onmouseleave={() => (hoveredBudgetIdx = null)}
-                onfocus={() => (hoveredBudgetIdx = i)}
-                onblur={() => (hoveredBudgetIdx = null)}
-                onclick={() => onOpenProject(ev.event_id)}
-              >
-                <div class="ac-bar-pair">
-                  <span class="ac-bar planned" style={`height:${Math.max(2, hp)}%`}></span>
-                  <span class="ac-bar actual" style={`height:${Math.max(2, ha)}%`}></span>
-                </div>
-                <small>{ev.event_id}</small>
-
-                {#if hoveredBudgetIdx === i}
-                  <div class="ac-bar-tooltip">
-                    <strong>{ev.event_id} &middot; {ev.title}</strong>
-                    <span>Planned: {baht(ev.budget_planned)}</span>
-                    <span>Actual: {baht(ev.actual)}</span>
+          <div class="ac-vchart-canvas">
+            <div class="ac-vchart-gridlines" aria-hidden="true">
+              {#each budgetTicks as _}
+                <span></span>
+              {/each}
+            </div>
+            <div class="ac-vchart-bars">
+              {#each budgetChartEvents as ev, i (ev.event_id)}
+                {@const hp = Math.min(100, Math.round((ev.budget_planned / budgetChartMax) * 100))}
+                {@const ha = Math.min(100, Math.round((ev.actual / budgetChartMax) * 100))}
+                <button
+                  type="button"
+                  class="ac-bar-group"
+                  class:edge-left={i <= 1}
+                  class:edge-right={i >= budgetChartEvents.length - 2}
+                  aria-label={`${ev.event_id} ${ev.title}: Planned ${baht(ev.budget_planned)}, Actual ${baht(ev.actual)}`}
+                  onmouseenter={() => (hoveredBudgetIdx = i)}
+                  onmouseleave={() => (hoveredBudgetIdx = null)}
+                  onfocus={() => (hoveredBudgetIdx = i)}
+                  onblur={() => (hoveredBudgetIdx = null)}
+                  onclick={() => onOpenProject(ev.event_id)}
+                >
+                  <div class="ac-bar-pair">
+                    <span class="ac-bar planned" style={`height:${Math.max(2, hp)}%`}></span>
+                    <span class="ac-bar actual" style={`height:${Math.max(2, ha)}%`}></span>
                   </div>
-                {/if}
-              </button>
-            {/each}
+                  <small>{ev.event_id}</small>
+
+                  {#if hoveredBudgetIdx === i}
+                    <div class="ac-bar-tooltip">
+                      <strong>{ev.event_id} &middot; {ev.title}</strong>
+                      <span>Planned: {baht(ev.budget_planned)}</span>
+                      <span>Actual: {baht(ev.actual)}</span>
+                    </div>
+                  {/if}
+                </button>
+              {/each}
+            </div>
           </div>
         </div>
       </div>
@@ -508,42 +512,44 @@
         </div>
       </div>
 
-      <div class="ac-mini-cal">
-        <div class="ac-mini-cal-dow">
-          {#each DOW_LABELS as d}
-            <span>{d}</span>
-          {/each}
-        </div>
-        <div class="ac-mini-cal-grid">
-          {#each monthCells as cell (cell.key)}
-            {@const milestones = milestonesByDate[cell.key] ?? []}
-            <div class="ac-mini-cell" class:other={cell.other} class:today={cell.today}>
-              <span class="ac-mini-day" class:is-today={cell.today}>{cell.dayNum}</span>
-              {#if milestones.length}
-                <div class="ac-mini-pills">
-                  {#each milestones.slice(0, 2) as m (m.key)}
-                    <button
-                      type="button"
-                      class={`ac-cal-pill ${statusTone(m.status)}`}
-                      title={`${m.event.title} (${m.label})`}
-                      onclick={() => onOpenProject(m.event.event_id)}
-                    >
-                      {m.label}
-                    </button>
-                  {/each}
-                  {#if milestones.length > 2}
-                    <button
-                      type="button"
-                      class="ac-cal-more"
-                      onclick={() => onSelectPage('calendar')}
-                    >
-                      +{milestones.length - 2} more
-                    </button>
-                  {/if}
-                </div>
-              {/if}
-            </div>
-          {/each}
+      <div class="ac-mini-cal-scroll">
+        <div class="ac-mini-cal">
+          <div class="ac-mini-cal-dow">
+            {#each DOW_LABELS as d}
+              <span>{d}</span>
+            {/each}
+          </div>
+          <div class="ac-mini-cal-grid">
+            {#each monthCells as cell (cell.key)}
+              {@const milestones = milestonesByDate[cell.key] ?? []}
+              <div class="ac-mini-cell" class:other={cell.other} class:today={cell.today}>
+                <span class="ac-mini-day" class:is-today={cell.today}>{cell.dayNum}</span>
+                {#if milestones.length}
+                  <div class="ac-mini-pills">
+                    {#each milestones.slice(0, 2) as m (m.key)}
+                      <button
+                        type="button"
+                        class={`ac-cal-pill ${statusTone(m.status)}`}
+                        title={`${m.event.title} (${m.label})`}
+                        onclick={() => onOpenProject(m.event.event_id)}
+                      >
+                        {m.label}
+                      </button>
+                    {/each}
+                    {#if milestones.length > 2}
+                      <button
+                        type="button"
+                        class="ac-cal-more"
+                        onclick={() => onSelectPage('calendar')}
+                      >
+                        +{milestones.length - 2} more
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
         </div>
       </div>
     </article>
