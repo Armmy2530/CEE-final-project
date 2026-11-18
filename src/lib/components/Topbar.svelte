@@ -54,18 +54,18 @@
   } = $props();
 
   let userMenuOpen = $state(false);
-  let moreMenuOpen = $state(false);
+  let summaryMenuOpen = $state(false);
   const ICON: Record<AlertItem['severity'], string> = { critical: '!', warning: '!', info: 'i' };
 
-  const isMorePage = $derived(
-    activePage === 'calendar' ||
+  const isSummaryGroup = $derived(
+    activePage === 'summary' ||
       activePage === 'members' ||
       activePage === 'budget' ||
-      activePage === 'users'
+      activePage === 'calendar'
   );
 
   function navigate(page: PageId) {
-    moreMenuOpen = false;
+    summaryMenuOpen = false;
     userMenuOpen = false;
     notifOpen = false;
     onSelectPage(page);
@@ -75,7 +75,7 @@
     e.stopPropagation();
     const next = !notifOpen;
     userMenuOpen = false;
-    moreMenuOpen = false;
+    summaryMenuOpen = false;
     notifOpen = next;
     if (next) onMarkSeen();
   }
@@ -84,16 +84,16 @@
     e.stopPropagation();
     const next = !userMenuOpen;
     notifOpen = false;
-    moreMenuOpen = false;
+    summaryMenuOpen = false;
     userMenuOpen = next;
   }
 
-  function toggleMoreMenu(e: MouseEvent) {
+  function toggleSummaryMenu(e: MouseEvent) {
     e.stopPropagation();
-    const next = !moreMenuOpen;
+    const next = !summaryMenuOpen;
     notifOpen = false;
     userMenuOpen = false;
-    moreMenuOpen = next;
+    summaryMenuOpen = next;
   }
 
   function handleWindowClick(e: MouseEvent) {
@@ -101,7 +101,7 @@
     if (!target?.closest('.menu-wrap')) {
       notifOpen = false;
       userMenuOpen = false;
-      moreMenuOpen = false;
+      summaryMenuOpen = false;
     }
   }
 
@@ -109,7 +109,7 @@
     if (e.key === 'Escape') {
       notifOpen = false;
       userMenuOpen = false;
-      moreMenuOpen = false;
+      summaryMenuOpen = false;
     }
   }
 </script>
@@ -127,7 +127,7 @@
           onclick={() => navigate('summary')}
         >
           <span class="ac-top-cap" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
               <path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5Z" />
               <path d="M6 11.5v4.3c0 1.4 2.7 2.7 6 2.7s6-1.3 6-2.7v-4.3" />
               <path d="M20.5 10.2v5.3" stroke-linecap="round" />
@@ -137,31 +137,14 @@
         </button>
 
         <nav class="ac-top-nav" aria-label="Main navigation">
-          <button
-            type="button"
-            class="ac-nav-pill"
-            class:active={activePage === 'summary'}
-            onclick={() => navigate('summary')}
-          >
-            Summary
-          </button>
-          <button
-            type="button"
-            class="ac-nav-pill"
-            class:active={activePage === 'projects'}
-            onclick={() => navigate('projects')}
-          >
-            Project data
-          </button>
-
           <div class="menu-wrap ac-more-wrap">
             <button
               type="button"
               class="ac-nav-pill ac-more-btn"
-              class:active={isMorePage}
+              class:active={isSummaryGroup}
               aria-haspopup="true"
-              aria-expanded={moreMenuOpen}
-              onclick={toggleMoreMenu}
+              aria-expanded={summaryMenuOpen}
+              onclick={toggleSummaryMenu}
             >
               {#if activePage === 'members'}
                 Members
@@ -169,16 +152,24 @@
                 Budget
               {:else if activePage === 'calendar'}
                 Calendar
-              {:else if activePage === 'users'}
-                Users
               {:else}
-                More
+                Summary
               {/if}
               <span class="ac-caret" aria-hidden="true">&#8964;</span>
             </button>
 
-            {#if moreMenuOpen}
-              <div class="popover ac-more-menu" role="menu">
+            {#if summaryMenuOpen}
+              <div class="popover ac-more-menu" role="menu" aria-label="Summary pages">
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="menu-item ac-more-item"
+                  class:current={activePage === 'summary'}
+                  onclick={() => navigate('summary')}
+                >
+                  <span>Summary</span>
+                </button>
+                <div class="ac-menu-divider"></div>
                 <button
                   type="button"
                   role="menuitem"
@@ -208,36 +199,18 @@
                   <span>Events calendar</span>
                   <span class="pill">{projectCount}</span>
                 </button>
-                {#if user.role === 'admin'}
-                  <div class="ac-menu-divider"></div>
-                  <button
-                    type="button"
-                    id="usersTab"
-                    role="menuitem"
-                    class="menu-item ac-more-item"
-                    class:current={activePage === 'users'}
-                    onclick={() => navigate('users')}
-                  >
-                    <span>Users</span>
-                  </button>
-                  {#if onOpenSheetPicker}
-                    <button
-                      type="button"
-                      id="openSheetPickerBtn"
-                      role="menuitem"
-                      class="menu-item ac-more-item"
-                      onclick={() => {
-                        moreMenuOpen = false;
-                        onOpenSheetPicker?.();
-                      }}
-                    >
-                      <span>Data source</span>
-                    </button>
-                  {/if}
-                {/if}
               </div>
             {/if}
           </div>
+
+          <button
+            type="button"
+            class="ac-nav-pill"
+            class:active={activePage === 'projects'}
+            onclick={() => navigate('projects')}
+          >
+            Project data
+          </button>
         </nav>
       </div>
 
@@ -351,7 +324,7 @@
           </button>
 
           {#if userMenuOpen}
-            <div class="popover user-menu top-user-menu" id="userMenu">
+            <div class="popover user-menu top-user-menu" id="userMenu" role="menu">
               <div class="user-menu-id" id="userMenuId">
                 <strong>{user.full_name}</strong> &middot; {user.member_id}
               </div>
@@ -359,62 +332,81 @@
                 <span class="source-dot" class:stale></span>
                 <span>{sourceLabel} &middot; {syncedLabel}</span>
               </div>
-              <button
-                class="menu-item"
-                type="button"
-                disabled={refreshing}
-                onclick={() => {
-                  userMenuOpen = false;
-                  onRefresh();
-                }}
-              >
-                {refreshing ? 'Syncing data...' : 'Sync data now'}
-              </button>
-              {#if user.role === 'admin' && onOpenSheetPicker}
+              {#if user.role === 'admin'}
                 <button
                   class="menu-item"
                   type="button"
+                  role="menuitem"
+                  disabled={refreshing}
                   onclick={() => {
                     userMenuOpen = false;
-                    onOpenSheetPicker?.();
+                    onRefresh();
                   }}
                 >
-                  Google Sheet source
+                  {refreshing ? 'Syncing data...' : 'Sync data now'}
                 </button>
-              {/if}
-              {#if user.linkedGoogleEmail}
-                <div class="user-menu-google" id="linkedGoogleStatus">
-                  Google linked: <strong>{user.linkedGoogleEmail}</strong>
-                </div>
                 <button
-                  class="menu-item"
-                  id="unlinkGoogleBtn"
                   type="button"
-                  onclick={() => {
-                    userMenuOpen = false;
-                    onUnlinkGoogle?.();
-                  }}
+                  id="usersTab"
+                  role="menuitem"
+                  class="menu-item ac-more-item"
+                  class:current={activePage === 'users'}
+                  onclick={() => navigate('users')}
                 >
-                  Unlink Google
+                  <span>Users</span>
                 </button>
-              {:else}
-                <button
-                  class="menu-item"
-                  id="linkGoogleBtn"
-                  type="button"
-                  onclick={() => {
-                    userMenuOpen = false;
-                    onLinkGoogle?.();
-                  }}
-                >
-                  Link Google account
-                </button>
+                {#if onOpenSheetPicker}
+                  <button
+                    type="button"
+                    id="openSheetPickerBtn"
+                    role="menuitem"
+                    class="menu-item ac-more-item"
+                    onclick={() => {
+                      userMenuOpen = false;
+                      onOpenSheetPicker?.();
+                    }}
+                  >
+                    <span>Data source</span>
+                  </button>
+                {/if}
+                <div class="ac-menu-divider"></div>
+                {#if user.linkedGoogleEmail}
+                  <div class="user-menu-google" id="linkedGoogleStatus">
+                    Google linked: <strong>{user.linkedGoogleEmail}</strong>
+                  </div>
+                  <button
+                    class="menu-item"
+                    id="unlinkGoogleBtn"
+                    type="button"
+                    role="menuitem"
+                    onclick={() => {
+                      userMenuOpen = false;
+                      onUnlinkGoogle?.();
+                    }}
+                  >
+                    Unlink Google
+                  </button>
+                {:else}
+                  <button
+                    class="menu-item"
+                    id="linkGoogleBtn"
+                    type="button"
+                    role="menuitem"
+                    onclick={() => {
+                      userMenuOpen = false;
+                      onLinkGoogle?.();
+                    }}
+                  >
+                    Link Google account
+                  </button>
+                {/if}
               {/if}
               <div class="ac-menu-divider"></div>
               <button
                 class="menu-item"
                 id="logoutBtn"
                 type="button"
+                role="menuitem"
                 onclick={() => {
                   userMenuOpen = false;
                   onLogout();
