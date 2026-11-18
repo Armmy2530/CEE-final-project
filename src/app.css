@@ -786,11 +786,9 @@ h1 {
 }
 
 .user-menu-google {
-  padding: 4px 10px 8px;
+  padding: 6px 10px 4px;
   font-size: 11px;
   color: var(--muted);
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5129,9 +5127,6 @@ select:focus-visible {
     padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
     gap: 2px;
   }
-  .mobile-bottom-nav.has-users {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
   .mobile-nav-item {
     border: 0;
     background: transparent;
@@ -5965,39 +5960,7 @@ body {
   gap: 10px;
 }
 
-.ac-theme-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.ac-theme-icon {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ac-muted);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-
-.ac-theme-icon:hover {
-  background: var(--ac-cream);
-  color: var(--ac-ink);
-}
-
-.ac-theme-icon.active {
-  color: var(--ac-ochre);
-}
-
-.ac-theme-icon svg,
-.ac-bell-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
+.ac-theme-btn,
 .ac-bell-btn {
   position: relative;
   width: 34px;
@@ -6011,6 +5974,13 @@ body {
   cursor: pointer;
 }
 
+.ac-theme-btn svg,
+.ac-bell-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ac-theme-btn:hover,
 .ac-bell-btn:hover {
   background: var(--ac-cream);
 }
@@ -7873,11 +7843,36 @@ body {
   }
   .mobile-bottom-nav {
     display: grid;
+    background: color-mix(in srgb, var(--ac-surface) 95%, transparent);
+    border-top: 1px solid var(--ac-border);
     padding: 5px 4px calc(5px + env(safe-area-inset-bottom, 0px));
   }
   .mobile-nav-item {
+    color: var(--ac-muted);
     font-size: 9.5px;
+    gap: 3px;
     padding: 5px 2px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .mobile-nav-item:hover {
+    color: var(--ac-ink);
+    background: var(--ac-cream);
+  }
+  .mobile-nav-item.active {
+    color: var(--ac-ochre);
+    background: var(--ac-ochre-soft);
+  }
+  .mobile-nav-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    line-height: 1;
+  }
+  .mobile-nav-icon svg {
+    width: 18px;
+    height: 18px;
+    display: block;
   }
   .mobile-nav-item span:last-child {
     max-width: 100%;
