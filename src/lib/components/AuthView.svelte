@@ -223,20 +223,6 @@
           <small>members</small>
         </div>
       </div>
-
-      <div class="auth-mini-stat">
-        <span class="auth-stat-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
-            <rect x="3" y="6" width="18" height="13" rx="2" />
-            <path d="M3 10h18" />
-            <path d="M16 14h2" stroke-linecap="round" />
-          </svg>
-        </span>
-        <div>
-          <strong>฿384,500</strong>
-          <small>budget</small>
-        </div>
-      </div>
     </div>
   </section>
 
