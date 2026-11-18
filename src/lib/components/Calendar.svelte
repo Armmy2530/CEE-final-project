@@ -427,7 +427,7 @@
                 ariaLabel="Jump to month"
                 value={activeMonth}
                 options={monthSelectOptions}
-                align="right"
+                align="left"
                 size="sm"
                 onchange={(m) => jumpToMonth(m)}
               />
