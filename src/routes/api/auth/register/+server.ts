@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { normalizeMemberId, type UserRole } from '$lib/server/db';
 import { jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
-import { ID_RE, validPassword } from '$lib/server/runtime';
+import { ID_RE, validPassword, validatePassword } from '$lib/server/runtime';
 
 export const POST: RequestHandler = async (event) => {
   const rt = event.locals.runtime;
@@ -25,8 +25,9 @@ export const POST: RequestHandler = async (event) => {
   if (!name || name.length > 80) {
     return jsonFail(400, 'Name is required (max 80 characters).');
   }
-  if (!validPassword(password)) {
-    return jsonFail(400, 'Password must be at least 8 characters.');
+  const pwErr = validatePassword(password);
+  if (pwErr || !validPassword(password)) {
+    return jsonFail(400, pwErr || 'Invalid password.');
   }
   if (await rt.resolveUser(id)) {
     return jsonFail(409, 'This ID already exists.');

@@ -653,8 +653,14 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
 
       expect((await call('GET', '/api/dashboard')).status).toBe(401);
       expect((await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'x' })).status).toBe(401);
-      expect((await call('POST', '/api/auth/setup', { member_id: 'NOPE99', password: 'longenough1' })).status).toBe(400);
+      expect((await call('POST', '/api/auth/setup', { member_id: 'NOPE99', password: 'LongEnough1' })).status).toBe(400);
       expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'short' })).status).toBe(400);
+      const setupNoUpper = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'lowercase1' });
+      expect(setupNoUpper.status).toBe(400);
+      expect(setupNoUpper.body.error).toContain('uppercase');
+      const setupNoDigit = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'NoDigitsHere' });
+      expect(setupNoDigit.status).toBe(400);
+      expect(setupNoDigit.body.error).toContain('number');
 
       // GET /api/auth/setup lookup before password setup
       const lookupUnknown = await call('GET', '/api/auth/setup?member_id=NOPE99');
@@ -669,7 +675,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       expect(lookupBefore.body.subtitle).toContain('Year');
 
       // Admin setup on 6600000001
-      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
       expect(adm.status).toBe(200);
       expect(adm.body.user.role).toBe('admin');
 
@@ -679,11 +685,11 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       expect(lookupAfter.body).toEqual({ found: true, alreadySetup: true });
 
       // Cannot re-setup an account that already has a password
-      expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'hijack1234' })).status).toBe(400);
+      expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'Hijack1234' })).status).toBe(400);
 
       // Login
       expect((await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'wrongpass1' })).status).toBe(401);
-      const login = await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'adminpass1' });
+      const login = await call('POST', '/api/auth/login', { member_id: '6600000001', password: 'AdminPass1' });
       expect(login.status).toBe(200);
 
       // Dashboard returns Mock-Data aggregates
@@ -703,11 +709,19 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       const ssrPage = await call('GET', '/', undefined, login.cookie);
       expect(ssrPage.text).toContain('<html data-theme="dark">');
 
-      // Public Sign up (/api/auth/register)
-      const reg = await call('POST', '/api/auth/register', {
+      // Public Sign up (/api/auth/register) enforces uppercase + number
+      const regNoUpper = await call('POST', '/api/auth/register', {
         member_id: 'REG-001',
         full_name: 'Registered Evaluator',
         password: 'evaluator123'
+      });
+      expect(regNoUpper.status).toBe(400);
+      expect(regNoUpper.body.error).toContain('uppercase');
+
+      const reg = await call('POST', '/api/auth/register', {
+        member_id: 'REG-001',
+        full_name: 'Registered Evaluator',
+        password: 'Evaluator123'
       });
       expect(reg.status).toBe(201);
       expect(reg.body.user.role).toBe('user');
@@ -717,7 +731,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
           await call('POST', '/api/auth/register', {
             member_id: 'REG-001',
             full_name: 'Dup',
-            password: 'evaluator123'
+            password: 'Evaluator123'
           })
         ).status
       ).toBe(409);
@@ -752,7 +766,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       ).toBe(400);
 
       // Normal user cannot call admin endpoints
-      const u = await call('POST', '/api/auth/setup', { member_id: '6600009999', password: 'userpass99' });
+      const u = await call('POST', '/api/auth/setup', { member_id: '6600009999', password: 'UserPass99' });
       expect((await call('GET', '/api/admin/users', undefined, u.cookie)).status).toBe(403);
       expect((await call('DELETE', '/api/admin/users/6600000001', undefined, u.cookie)).status).toBe(403);
 
@@ -808,7 +822,7 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
     });
 
     try {
-      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
       expect(adm.status).toBe(200);
 
       // 1. OpenRouter succeeds -> mode: 'ai'
@@ -1132,7 +1146,7 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
       const reg = await call('POST', '/api/auth/register', {
         member_id: '  6600000001  ',
         full_name: 'Sutthikan Panla',
-        password: 'adminpass123'
+        password: 'AdminPass123'
       });
       expect(reg.status).toBe(201);
       expect(reg.body.user.member_id).toBe('6600000001');
@@ -1153,7 +1167,7 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
       expect(normalizeMemberId('  6600000002 ')).toBe('6600000002');
       const setup2 = await call('POST', '/api/auth/setup', {
         member_id: ' 6600000002 ',
-        password: 'memberpass1'
+        password: 'MemberPass1'
       });
       expect(setup2.status).toBe(200);
       expect(setup2.body.user.member_id).toBe('6600000002');
@@ -1161,7 +1175,7 @@ describe('Idempotent seeding, admin promotion, and runtime compatibility', () =>
 
       const login2 = await call('POST', '/api/auth/login', {
         member_id: '6600000002',
-        password: 'memberpass1'
+        password: 'MemberPass1'
       });
       expect(login2.status).toBe(200);
       expect(login2.body.user.member_id).toBe('6600000002');
@@ -1243,7 +1257,7 @@ describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
     const src = createSource({ env: {}, fetchImpl: gvizFetch });
     const { call, close } = createHarness({}, src);
     try {
-      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
       expect(adm.status).toBe(200);
 
       const cfg0 = await call('GET', '/api/sheets/config', undefined, adm.cookie);
@@ -1420,7 +1434,7 @@ describe('SQLite app_settings and Supabase public-cee-v2 client', () => {
 
     const { call, close } = createHarness({}, undefined, mockSupa);
     try {
-      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
       expect(adm.status).toBe(200);
       expect(upsertedUsers).toContain('6600000001');
 
@@ -1595,7 +1609,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       expect(savedSettings.has('google_provider_token')).toBe(false);
 
       // 3. Admin (6600000001) sets up password -> linkedGoogleEmail starts null
-      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
+      const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'AdminPass1' });
       expect(adm.status).toBe(200);
       expect(adm.body.user.linkedGoogleEmail).toBeNull();
 
@@ -1645,7 +1659,7 @@ describe('Supabase Google OAuth & authenticated Drive / Sheets', () => {
       //    and receives 403 on POST /api/sheets/config and GET /api/sheets/drive
       const normalUser = await call('POST', '/api/auth/setup', {
         member_id: '6600000002',
-        password: 'memberpass1'
+        password: 'MemberPass1'
       });
       expect(normalUser.status).toBe(200);
       expect(normalUser.body.user.role).toBe('user');

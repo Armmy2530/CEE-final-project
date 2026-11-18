@@ -1,5 +1,6 @@
 <script lang="ts">
   import { apiFetch } from '$lib/format';
+  import { validatePassword } from '$lib/validation';
   import type { SessionUser } from '$lib/types';
 
   type AuthMode = 'login' | 'register';
@@ -159,8 +160,9 @@
         error = 'Please enter your full name.';
         return;
       }
-      if (password.length < 8) {
-        error = 'Password must be at least 8 characters.';
+      const pwErr = validatePassword(password);
+      if (pwErr) {
+        error = pwErr;
         return;
       }
       if (password !== confirm) {

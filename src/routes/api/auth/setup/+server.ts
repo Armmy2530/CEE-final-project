@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { normalizeMemberId } from '$lib/server/db';
 import { jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
-import { validPassword } from '$lib/server/runtime';
+import { validPassword, validatePassword } from '$lib/server/runtime';
 
 export const GET: RequestHandler = async (event) => {
   const rt = event.locals.runtime;
@@ -57,8 +57,12 @@ export const POST: RequestHandler = async (event) => {
   }
 
   const { member_id, password } = body;
+  const pwErr = validatePassword(password);
+  if (pwErr) {
+    return jsonFail(400, pwErr);
+  }
   if (!validPassword(password)) {
-    return jsonFail(400, 'Password must be at least 8 characters.');
+    return jsonFail(400, 'Invalid password.');
   }
 
   const id = typeof member_id === 'string' ? normalizeMemberId(member_id) : '';
