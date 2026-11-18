@@ -18,6 +18,39 @@ export function fmtRange(ev: Pick<ProjectSummary, 'date' | 'end_date'>): string 
   return ev.end_date && ev.end_date !== ev.date ? `${fmtDate(ev.date)} – ${fmtDate(ev.end_date)}` : fmtDate(ev.date);
 }
 
+export function fmtCompactRange(ev: Pick<ProjectSummary, 'date' | 'end_date'>): string {
+  const s = ev.date;
+  const e = ev.end_date || ev.date;
+  if (!s) return '';
+  if (s === e) return fmtDate(s);
+  const ps = s.split('-');
+  const pe = e.split('-');
+  if (ps.length !== 3 || pe.length !== 3) return fmtRange(ev);
+  const ds = new Date(Date.UTC(+ps[0], +ps[1] - 1, +ps[2]));
+  const de = new Date(Date.UTC(+pe[0], +pe[1] - 1, +pe[2]));
+  const d1 = ds.getUTCDate();
+  const d2 = de.getUTCDate();
+  const m1 = ds.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+  const m2 = de.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+  const y1 = ds.getUTCFullYear();
+  const y2 = de.getUTCFullYear();
+  if (y1 === y2 && m1 === m2) return `${d1} – ${d2} ${m2} ${y2}`;
+  if (y1 === y2) return `${d1} ${m1} – ${d2} ${m2} ${y2}`;
+  return `${d1} ${m1} ${y1} – ${d2} ${m2} ${y2}`;
+}
+
+export type DisplayStatus = 'Done' | 'Processing' | 'Waiting' | 'Cancelled';
+
+export function getDisplayStatus(
+  ev: Pick<ProjectSummary, 'status' | 'date'>,
+  today: string
+): DisplayStatus {
+  if (ev.status === 'Completed') return 'Done';
+  if (ev.status === 'Cancelled') return 'Cancelled';
+  if (!today || ev.date <= today) return 'Processing';
+  return 'Waiting';
+}
+
 export function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }

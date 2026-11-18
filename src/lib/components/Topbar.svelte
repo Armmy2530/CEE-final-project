@@ -5,15 +5,6 @@
 
   export type PageId = 'summary' | 'projects' | 'calendar' | 'members' | 'budget' | 'users';
 
-  const PAGE_TITLES: Record<PageId, string> = {
-    summary: 'Summary',
-    projects: 'Project data',
-    calendar: 'Events calendar',
-    members: 'Members',
-    budget: 'Budget',
-    users: 'Users'
-  };
-
   let {
     user,
     activePage,
@@ -23,7 +14,7 @@
     notifOpen = $bindable(false),
     projectCount = 0,
     memberCount = 0,
-    sourceLabel = 'Master sheet',
+    sourceLabel = 'Mock CSV data',
     syncedLabel = 'Synced just now',
     stale = false,
     refreshing = false,
@@ -63,15 +54,20 @@
   } = $props();
 
   let userMenuOpen = $state(false);
-  let topUserMenuOpen = $state(false);
-  let mobileNavOpen = $state(false);
+  let moreMenuOpen = $state(false);
   const ICON: Record<AlertItem['severity'], string> = { critical: '!', warning: '!', info: 'i' };
-  const breadcrumbTitle = $derived(PAGE_TITLES[activePage] || 'Summary');
+
+  const isMorePage = $derived(
+    activePage === 'calendar' ||
+      activePage === 'members' ||
+      activePage === 'budget' ||
+      activePage === 'users'
+  );
 
   function navigate(page: PageId) {
-    mobileNavOpen = false;
+    moreMenuOpen = false;
     userMenuOpen = false;
-    topUserMenuOpen = false;
+    notifOpen = false;
     onSelectPage(page);
   }
 
@@ -79,7 +75,7 @@
     e.stopPropagation();
     const next = !notifOpen;
     userMenuOpen = false;
-    topUserMenuOpen = false;
+    moreMenuOpen = false;
     notifOpen = next;
     if (next) onMarkSeen();
   }
@@ -88,24 +84,24 @@
     e.stopPropagation();
     const next = !userMenuOpen;
     notifOpen = false;
-    topUserMenuOpen = false;
+    moreMenuOpen = false;
     userMenuOpen = next;
   }
 
-  function toggleTopUserMenu(e: MouseEvent) {
+  function toggleMoreMenu(e: MouseEvent) {
     e.stopPropagation();
-    const next = !topUserMenuOpen;
+    const next = !moreMenuOpen;
     notifOpen = false;
     userMenuOpen = false;
-    topUserMenuOpen = next;
+    moreMenuOpen = next;
   }
 
   function handleWindowClick(e: MouseEvent) {
     const target = e.target as HTMLElement | null;
-    if (!target?.closest('.menu-wrap') && !target?.closest('.profile-wrap')) {
+    if (!target?.closest('.menu-wrap')) {
       notifOpen = false;
       userMenuOpen = false;
-      topUserMenuOpen = false;
+      moreMenuOpen = false;
     }
   }
 
@@ -113,387 +109,327 @@
     if (e.key === 'Escape') {
       notifOpen = false;
       userMenuOpen = false;
-      topUserMenuOpen = false;
-      mobileNavOpen = false;
+      moreMenuOpen = false;
     }
   }
 </script>
 
 <svelte:window onclick={handleWindowClick} onkeydown={handleWindowKeydown} />
 
-{#if mobileNavOpen}
-  <button
-    type="button"
-    class="sidebar-backdrop"
-    aria-label="Close navigation menu"
-    onclick={() => (mobileNavOpen = false)}
-  ></button>
-{/if}
-
-<aside id="appSidebar" class="sidebar" class:mobile-open={mobileNavOpen}>
-  <div class="sidebar-brand-row">
-    <button
-      type="button"
-      class="brand"
-      aria-label="Clubhouse home"
-      onclick={() => navigate('summary')}
-    >
-      <span class="brand-mark">
-        <svg viewBox="0 0 40 40" aria-hidden="true">
-          <path d="M4 14.2 20 7l16 7.2-16 7.1L4 14.2Z" />
-          <path d="M10 18v7.4c5.9 4.3 14.1 4.3 20 0V18l-10 4.5L10 18Z" />
-          <path d="M35.8 15v9.2" />
-          <circle cx="35.8" cy="27" r="1.7" />
-        </svg>
-      </span>
-      <span class="brand-word">clubhouse<span>.</span></span>
-    </button>
-    <button
-      type="button"
-      class="icon-button sidebar-close-btn"
-      aria-label="Close navigation menu"
-      onclick={() => (mobileNavOpen = false)}
-    >
-      &times;
-    </button>
-  </div>
-
-  <div class="workspace-switch">
-    <span class="workspace-icon">A</span>
-    <span>
-      <b>Academic AC</b>
-      <small>Club workspace</small>
-    </span>
-    <span class="chevron" aria-hidden="true">&#8964;</span>
-  </div>
-
-  <p class="nav-label">WORKSPACE</p>
-  <nav class="primary-nav" aria-label="Main navigation">
-    <button
-      type="button"
-      class="nav-item"
-      class:active={activePage === 'summary'}
-      onclick={() => navigate('summary')}
-    >
-      <span class="nav-icon" aria-hidden="true">&#9638;</span>
-      Summary
-    </button>
-    <button
-      type="button"
-      class="nav-item"
-      class:active={activePage === 'projects'}
-      onclick={() => navigate('projects')}
-    >
-      <span class="nav-icon" aria-hidden="true">&#9636;</span>
-      Project data
-      <span class="nav-count">{projectCount}</span>
-    </button>
-    <button
-      type="button"
-      class="nav-item"
-      class:active={activePage === 'calendar'}
-      onclick={() => navigate('calendar')}
-    >
-      <span class="nav-icon" aria-hidden="true">&#9635;</span>
-      Events calendar
-    </button>
-    <button
-      type="button"
-      class="nav-item"
-      class:active={activePage === 'members'}
-      onclick={() => navigate('members')}
-    >
-      <span class="nav-icon" aria-hidden="true">&#9817;</span>
-      Members
-      <span class="nav-count">{memberCount}</span>
-    </button>
-  </nav>
-
-  <p class="nav-label second-label">MANAGE</p>
-  <nav class="primary-nav" aria-label="Management navigation">
-    <button
-      type="button"
-      class="nav-item"
-      class:active={activePage === 'budget'}
-      onclick={() => navigate('budget')}
-    >
-      <span class="nav-icon" aria-hidden="true">&#9707;</span>
-      Budget
-    </button>
-    {#if user.role === 'admin'}
-      <button
-        type="button"
-        id="usersTab"
-        class="nav-item"
-        class:active={activePage === 'users'}
-        onclick={() => navigate('users')}
-      >
-        <span class="nav-icon" aria-hidden="true">&#9639;</span>
-        Users
-      </button>
-    {/if}
-  </nav>
-
-  <div class="sidebar-bottom">
-    <div class="source-card">
-      <div class="source-card-info">
-        <span class="source-dot" class:stale></span>
-        <span>
-          <b>{sourceLabel}</b>
-          <small>{syncedLabel}</small>
-        </span>
-      </div>
-      {#if user.role === 'admin' && onOpenSheetPicker}
+<div class="ac-shell">
+  <header class="ac-topbar">
+    <div class="ac-topbar-inner">
+      <div class="ac-topbar-left">
         <button
           type="button"
-          class="source-sync-btn"
-          id="openSheetPickerBtn"
-          aria-label="Configure Google Sheet or data source"
-          title="Configure Google Sheet or data source"
-          onclick={() => {
-            mobileNavOpen = false;
-            onOpenSheetPicker?.();
-          }}
+          class="ac-top-brand"
+          aria-label="Academic AC home"
+          onclick={() => navigate('summary')}
         >
-          &middot;&middot;&middot;
+          <span class="ac-top-cap" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9">
+              <path d="M2 9.5 12 5l10 4.5-10 4.5L2 9.5Z" />
+              <path d="M6 11.5v4.3c0 1.4 2.7 2.7 6 2.7s6-1.3 6-2.7v-4.3" />
+              <path d="M20.5 10.2v5.3" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span class="ac-top-word">ACADEMIC AC</span>
         </button>
-      {/if}
-      <button
-        type="button"
-        class="source-sync-btn"
-        aria-label="Sync data source"
-        title="Sync data now"
-        disabled={refreshing}
-        onclick={onRefresh}
-      >
-        &#8635;
-      </button>
-    </div>
 
-    <div class="profile-wrap">
-      <button
-        type="button"
-        class="profile"
-        id="userBtn"
-        aria-haspopup="true"
-        aria-expanded={userMenuOpen}
-        onclick={toggleUserMenu}
-      >
-        <span class="avatar" id="userInitials">{initials(user.full_name)}</span>
-        <span class="profile-text">
-          <b id="userName">{user.full_name}</b>
-          <small id="userRole">{user.role === 'admin' ? 'Admin' : 'Normal user'}</small>
-        </span>
-        <span class="chevron" aria-hidden="true">&#8964;</span>
-      </button>
-
-      {#if userMenuOpen}
-        <div class="user-menu sidebar-user-menu" id="userMenu">
-          <div class="user-menu-id" id="userMenuId">Signed in as {user.member_id}</div>
-          {#if user.linkedGoogleEmail}
-            <div class="user-menu-google" id="linkedGoogleStatus">
-              Google linked: <strong>{user.linkedGoogleEmail}</strong>
-            </div>
-            <button
-              class="menu-item"
-              id="unlinkGoogleBtn"
-              type="button"
-              onclick={() => {
-                userMenuOpen = false;
-                mobileNavOpen = false;
-                onUnlinkGoogle?.();
-              }}
-            >
-              Unlink Google
-            </button>
-          {:else}
-            <button
-              class="menu-item"
-              id="linkGoogleBtn"
-              type="button"
-              onclick={() => {
-                userMenuOpen = false;
-                mobileNavOpen = false;
-                onLinkGoogle?.();
-              }}
-            >
-              Link Google account
-            </button>
-          {/if}
+        <nav class="ac-top-nav" aria-label="Main navigation">
           <button
-            class="menu-item"
-            id="logoutBtn"
             type="button"
-            onclick={() => {
-              userMenuOpen = false;
-              mobileNavOpen = false;
-              onLogout();
-            }}
+            class="ac-nav-pill"
+            class:active={activePage === 'summary'}
+            onclick={() => navigate('summary')}
           >
-            Log out
+            Summary
+          </button>
+          <button
+            type="button"
+            class="ac-nav-pill"
+            class:active={activePage === 'projects'}
+            onclick={() => navigate('projects')}
+          >
+            Project data
+          </button>
+
+          <div class="menu-wrap ac-more-wrap">
+            <button
+              type="button"
+              class="ac-nav-pill ac-more-btn"
+              class:active={isMorePage}
+              aria-haspopup="true"
+              aria-expanded={moreMenuOpen}
+              onclick={toggleMoreMenu}
+            >
+              {#if activePage === 'members'}
+                Members
+              {:else if activePage === 'budget'}
+                Budget
+              {:else if activePage === 'calendar'}
+                Calendar
+              {:else if activePage === 'users'}
+                Users
+              {:else}
+                More
+              {/if}
+              <span class="ac-caret" aria-hidden="true">&#8964;</span>
+            </button>
+
+            {#if moreMenuOpen}
+              <div class="popover ac-more-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="menu-item ac-more-item"
+                  class:current={activePage === 'members'}
+                  onclick={() => navigate('members')}
+                >
+                  <span>Members</span>
+                  <span class="pill">{memberCount}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="menu-item ac-more-item"
+                  class:current={activePage === 'budget'}
+                  onclick={() => navigate('budget')}
+                >
+                  <span>Budget</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="menu-item ac-more-item"
+                  class:current={activePage === 'calendar'}
+                  onclick={() => navigate('calendar')}
+                >
+                  <span>Events calendar</span>
+                  <span class="pill">{projectCount}</span>
+                </button>
+                {#if user.role === 'admin'}
+                  <div class="ac-menu-divider"></div>
+                  <button
+                    type="button"
+                    id="usersTab"
+                    role="menuitem"
+                    class="menu-item ac-more-item"
+                    class:current={activePage === 'users'}
+                    onclick={() => navigate('users')}
+                  >
+                    <span>Users</span>
+                  </button>
+                  {#if onOpenSheetPicker}
+                    <button
+                      type="button"
+                      id="openSheetPickerBtn"
+                      role="menuitem"
+                      class="menu-item ac-more-item"
+                      onclick={() => {
+                        moreMenuOpen = false;
+                        onOpenSheetPicker?.();
+                      }}
+                    >
+                      <span>Data source</span>
+                    </button>
+                  {/if}
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </nav>
+      </div>
+
+      <div class="ac-top-actions">
+        <div class="ac-theme-switch" role="group" aria-label="Color theme">
+          <button
+            type="button"
+            id={theme === 'dark' ? 'themeToggle' : undefined}
+            class="ac-theme-icon"
+            class:active={theme === 'light'}
+            aria-label="Switch to light mode"
+            aria-pressed={theme === 'light'}
+            title="Light mode"
+            onclick={() => onSetTheme('light')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            id={theme === 'light' ? 'themeToggle' : undefined}
+            class="ac-theme-icon"
+            class:active={theme === 'dark'}
+            aria-label="Switch to dark mode"
+            aria-pressed={theme === 'dark'}
+            title="Dark mode"
+            onclick={() => onSetTheme('dark')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" stroke-linejoin="round" />
+            </svg>
           </button>
         </div>
-      {/if}
-    </div>
-  </div>
-</aside>
 
-<div class="main-area">
-  <header class="topbar">
-    <div class="topbar-left">
-      <button
-        type="button"
-        id="mobileMenuBtn"
-        class="icon-button mobile-menu-btn"
-        aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
-        aria-expanded={mobileNavOpen}
-        aria-controls="appSidebar"
-        onclick={() => (mobileNavOpen = !mobileNavOpen)}
-      >
-        <span aria-hidden="true">&#9776;</span>
-      </button>
-      <div class="breadcrumbs">
-        <span class="crumb-workspace">Workspace</span>
-        <span class="crumb-slash">/</span>
-        <b id="breadcrumb-current">{breadcrumbTitle}</b>
-      </div>
-    </div>
+        <div class="menu-wrap">
+          <button
+            class="ac-bell-btn"
+            id="bellBtn"
+            type="button"
+            aria-label={`Notifications${alerts.length ? `, ${alerts.length} active` : ', none'}`}
+            aria-haspopup="true"
+            aria-expanded={notifOpen}
+            onclick={toggleNotif}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke-linejoin="round" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-linecap="round" />
+            </svg>
+            {#if hasUnread && !notifOpen}
+              <i class="notice-dot" id="bellDot"></i>
+            {/if}
+          </button>
 
-    <div class="top-actions">
-      <span class="sync-status">
-        <i></i>
-        {refreshing ? 'Refreshing...' : 'All changes saved'}
-      </span>
-
-      <button
-        class="icon-button theme-button"
-        id="themeToggle"
-        type="button"
-        aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        aria-pressed={theme === 'dark'}
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        onclick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
-      >
-        {theme === 'dark' ? '☀' : '☾'}
-      </button>
-
-      <div class="menu-wrap">
-        <button
-          class="icon-button notification-button"
-          id="bellBtn"
-          type="button"
-          aria-label={`Notifications${alerts.length ? `, ${alerts.length} active` : ', none'}`
-          }
-          aria-haspopup="true"
-          aria-expanded={notifOpen}
-          onclick={toggleNotif}
-        >
-          &#9831;
-          {#if hasUnread && !notifOpen}
-            <i class="notice-dot" id="bellDot"></i>
-          {/if}
-        </button>
-
-        {#if notifOpen}
-          <div class="popover notif-panel" id="notifPanel">
-            <div class="popover-head">
-              <strong>Notifications</strong>
-              <span id="notifCount" class="pill">{alerts.length} active</span>
-            </div>
-            <ul id="notifList" class="notif-list">
-              {#if !alerts.length}
-                <li class="notif-empty">
-                  All clear. We'll let you know when an event is coming up or a budget needs attention.
-                </li>
-              {:else}
-                {#each alerts as a (a.id)}
-                  <li class="notif-item" class:clickable={Boolean(a.event_id)}>
-                    <span class={`sev ${a.severity}`} aria-hidden="true">{ICON[a.severity]}</span>
-                    <div>
-                      {#if a.event_id && onOpenProject}
-                        <button
-                          type="button"
-                          class="cal-detail-link"
-                          onclick={() => {
-                            notifOpen = false;
-                            onOpenProject(a.event_id!);
-                          }}
-                        >
-                          <strong>{a.title}</strong>
-                        </button>
-                      {:else}
-                        <strong>{a.title}</strong>
-                      {/if}
-                      <span class="nmsg">{a.message}</span>
-                    </div>
+          {#if notifOpen}
+            <div class="popover notif-panel" id="notifPanel">
+              <div class="popover-head">
+                <strong>Notifications</strong>
+                <span id="notifCount" class="pill">{alerts.length} active</span>
+              </div>
+              <ul id="notifList" class="notif-list">
+                {#if !alerts.length}
+                  <li class="notif-empty">
+                    All clear. We'll let you know when an event is coming up or a budget needs attention.
                   </li>
-                {/each}
-              {/if}
-            </ul>
-          </div>
-        {/if}
-      </div>
-
-      <div class="menu-wrap">
-        <button
-          type="button"
-          class="avatar top-avatar"
-          aria-label="Toggle user menu"
-          aria-haspopup="true"
-          aria-expanded={topUserMenuOpen}
-          onclick={toggleTopUserMenu}
-        >
-          {initials(user.full_name)}
-        </button>
-
-        {#if topUserMenuOpen}
-          <div class="popover user-menu top-user-menu">
-            <div class="user-menu-id">
-              <strong>{user.full_name}</strong> &middot; {user.member_id}
+                {:else}
+                  {#each alerts as a (a.id)}
+                    <li class="notif-item" class:clickable={Boolean(a.event_id)}>
+                      <span class={`sev ${a.severity}`} aria-hidden="true">{ICON[a.severity]}</span>
+                      <div>
+                        {#if a.event_id && onOpenProject}
+                          <button
+                            type="button"
+                            class="cal-detail-link"
+                            onclick={() => {
+                              notifOpen = false;
+                              onOpenProject(a.event_id!);
+                            }}
+                          >
+                            <strong>{a.title}</strong>
+                          </button>
+                        {:else}
+                          <strong>{a.title}</strong>
+                        {/if}
+                        <span class="nmsg">{a.message}</span>
+                      </div>
+                    </li>
+                  {/each}
+                {/if}
+              </ul>
             </div>
-            {#if user.linkedGoogleEmail}
-              <div class="user-menu-google">
-                Google linked: <strong>{user.linkedGoogleEmail}</strong>
+          {/if}
+        </div>
+
+        <div class="menu-wrap">
+          <button
+            type="button"
+            class="ac-user-pill"
+            id="userBtn"
+            aria-haspopup="true"
+            aria-expanded={userMenuOpen}
+            onclick={toggleUserMenu}
+          >
+            <span class="ac-user-avatar" id="userInitials">{initials(user.full_name)}</span>
+            <span class="ac-user-meta">
+              <b id="userName">{user.full_name}</b>
+              <small id="userRole">{user.role === 'admin' ? 'Admin' : 'Member'}</small>
+            </span>
+            <span class="ac-user-caret" aria-hidden="true">&#8964;</span>
+          </button>
+
+          {#if userMenuOpen}
+            <div class="popover user-menu top-user-menu" id="userMenu">
+              <div class="user-menu-id" id="userMenuId">
+                <strong>{user.full_name}</strong> &middot; {user.member_id}
+              </div>
+              <div class="user-menu-source">
+                <span class="source-dot" class:stale></span>
+                <span>{sourceLabel} &middot; {syncedLabel}</span>
               </div>
               <button
                 class="menu-item"
                 type="button"
+                disabled={refreshing}
                 onclick={() => {
-                  topUserMenuOpen = false;
-                  onUnlinkGoogle?.();
+                  userMenuOpen = false;
+                  onRefresh();
                 }}
               >
-                Unlink Google
+                {refreshing ? 'Syncing data...' : 'Sync data now'}
               </button>
-            {:else}
+              {#if user.role === 'admin' && onOpenSheetPicker}
+                <button
+                  class="menu-item"
+                  type="button"
+                  onclick={() => {
+                    userMenuOpen = false;
+                    onOpenSheetPicker?.();
+                  }}
+                >
+                  Google Sheet source
+                </button>
+              {/if}
+              {#if user.linkedGoogleEmail}
+                <div class="user-menu-google" id="linkedGoogleStatus">
+                  Google linked: <strong>{user.linkedGoogleEmail}</strong>
+                </div>
+                <button
+                  class="menu-item"
+                  id="unlinkGoogleBtn"
+                  type="button"
+                  onclick={() => {
+                    userMenuOpen = false;
+                    onUnlinkGoogle?.();
+                  }}
+                >
+                  Unlink Google
+                </button>
+              {:else}
+                <button
+                  class="menu-item"
+                  id="linkGoogleBtn"
+                  type="button"
+                  onclick={() => {
+                    userMenuOpen = false;
+                    onLinkGoogle?.();
+                  }}
+                >
+                  Link Google account
+                </button>
+              {/if}
+              <div class="ac-menu-divider"></div>
               <button
                 class="menu-item"
+                id="logoutBtn"
                 type="button"
                 onclick={() => {
-                  topUserMenuOpen = false;
-                  onLinkGoogle?.();
+                  userMenuOpen = false;
+                  onLogout();
                 }}
               >
-                Link Google account
+                Sign out
               </button>
-            {/if}
-            <button
-              class="menu-item"
-              type="button"
-              onclick={() => {
-                topUserMenuOpen = false;
-                onLogout();
-              }}
-            >
-              Log out
-            </button>
-          </div>
-        {/if}
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
   </header>
 
-  <main class="content-wrap">
+  <main class="ac-main-wrap">
     {@render children?.()}
   </main>
 

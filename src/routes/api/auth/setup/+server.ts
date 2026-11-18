@@ -3,6 +3,47 @@ import { normalizeMemberId } from '$lib/server/db';
 import { getClientIp, jsonFail, jsonOk, readJsonBody, setSessionCookie } from '$lib/server/http';
 import { validPassword } from '$lib/server/runtime';
 
+export const GET: RequestHandler = async (event) => {
+  const rt = event.locals.runtime;
+  await rt.ensureSeeded();
+
+  const rawId = event.url.searchParams.get('member_id') || '';
+  const id = normalizeMemberId(rawId);
+  if (!id || id.length < 3) {
+    return jsonOk({ found: false, alreadySetup: false });
+  }
+
+  const u = await rt.resolveUser(id);
+  if (!u) {
+    return jsonOk({ found: false, alreadySetup: false });
+  }
+  if (u.pw_hash) {
+    return jsonOk({ found: true, alreadySetup: true });
+  }
+
+  let subtitle = '';
+  try {
+    const r = await rt.source.getData();
+    const member = r.data.Members.find(
+      (m) => m.member_id.trim().toLowerCase() === u.member_id.trim().toLowerCase()
+    );
+    if (member) {
+      const dept = member.major || member.department || '';
+      const yr = member.year ? `Year ${member.year}` : '';
+      subtitle = [dept, yr].filter(Boolean).join(' / ');
+    }
+  } catch {
+    // ignore sheet lookup error; full_name still helps confirm identity
+  }
+
+  return jsonOk({
+    found: true,
+    alreadySetup: false,
+    full_name: u.full_name,
+    subtitle
+  });
+};
+
 export const POST: RequestHandler = async (event) => {
   const rt = event.locals.runtime;
   await rt.ensureSeeded();

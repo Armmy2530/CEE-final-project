@@ -656,10 +656,27 @@ describe('SvelteKit API routes, auth, theme persistence, and rate limiting', () 
       expect((await call('POST', '/api/auth/setup', { member_id: 'NOPE99', password: 'longenough1' })).status).toBe(400);
       expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'short' })).status).toBe(400);
 
+      // GET /api/auth/setup lookup before password setup
+      const lookupUnknown = await call('GET', '/api/auth/setup?member_id=NOPE99');
+      expect(lookupUnknown.status).toBe(200);
+      expect(lookupUnknown.body).toEqual({ found: false, alreadySetup: false });
+
+      const lookupBefore = await call('GET', '/api/auth/setup?member_id=6600000001');
+      expect(lookupBefore.status).toBe(200);
+      expect(lookupBefore.body.found).toBe(true);
+      expect(lookupBefore.body.alreadySetup).toBe(false);
+      expect(lookupBefore.body.full_name).toBeTruthy();
+      expect(lookupBefore.body.subtitle).toContain('Year');
+
       // Admin setup on 6600000001
       const adm = await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'adminpass1' });
       expect(adm.status).toBe(200);
       expect(adm.body.user.role).toBe('admin');
+
+      // GET /api/auth/setup after password setup must omit full_name
+      const lookupAfter = await call('GET', '/api/auth/setup?member_id=6600000001');
+      expect(lookupAfter.status).toBe(200);
+      expect(lookupAfter.body).toEqual({ found: true, alreadySetup: true });
 
       // Cannot re-setup an account that already has a password
       expect((await call('POST', '/api/auth/setup', { member_id: '6600000001', password: 'hijack1234' })).status).toBe(400);

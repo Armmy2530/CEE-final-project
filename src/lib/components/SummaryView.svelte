@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { baht, fmtDate, fmtRange, pct } from '$lib/format';
-  import type { DashboardPayload, ProjectCategory, ProjectSummary } from '$lib/types';
+  import { buildMonthGrid, DOW_LABELS, getMonthTitle, shiftMonthStr } from '$lib/calendar';
+  import { addDayStr, baht, getDisplayStatus, type DisplayStatus } from '$lib/format';
+  import type { DashboardPayload, ProjectSummary } from '$lib/types';
   import type { PageId } from './Topbar.svelte';
 
   let {
@@ -12,7 +13,8 @@
     onRefresh,
     onOpenProject,
     onSelectPage,
-    onOpenSheetPicker
+    onOpenSheetPicker,
+    onNotifyMe
   }: {
     dash: DashboardPayload | null;
     loadError: string;
@@ -23,111 +25,233 @@
     onOpenProject: (eventId: string) => void;
     onSelectPage: (page: PageId) => void;
     onOpenSheetPicker?: () => void;
+    onNotifyMe?: () => void;
   } = $props();
 
-  let statusFilter = $state<'all' | 'Completed' | 'Scheduled' | 'Cancelled'>('all');
-  let showAllAttendance = $state(false);
-  let hidePlanned = $state(false);
-  let hideActual = $state(false);
+  let yearFilter = $state<'all' | '2026' | '2027'>('all');
+  let calMonth = $state('');
+  let hoveredBudgetIdx = $state<number | null>(null);
 
-  const eyebrowDate = $derived.by(() => {
-    if (!dash?.today) return 'SEMESTER OVERVIEW';
-    const p = dash.today.split('-');
-    if (p.length !== 3) return dash.today;
-    const d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
-    return d
-      .toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-        timeZone: 'UTC'
-      })
-      .toUpperCase();
-  });
+  const today = $derived(dash?.today || '2026-11-18');
 
-  const bannerMsg = $derived.by(() => {
-    if (!dash?.meta) return '';
-    const msgs: string[] = [];
-    if (dash.meta.source === 'mock') {
-      msgs.push('Showing normalized Mock-Data CSVs. Connect a Google Sheet from Drive or paste a sheet link anytime.');
+  $effect(() => {
+    if (!calMonth && today) {
+      calMonth = today.slice(0, 7);
     }
-    if (dash.meta.stale) {
-      msgs.push('Google Sheets could not be reached, so the last saved copy is shown.');
+  });
+
+  const lastUpdatedText = $derived.by(() => {
+    const ts = dash?.meta?.fetchedAt;
+    if (!ts) return 'Syncing...';
+    const d = new Date(ts);
+    const datePart = d.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+    const timePart = d.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return `${datePart}, ${timePart}`;
+  });
+
+  const scopedEvents = $derived.by(() => {
+    const all = dash?.events ?? [];
+    if (yearFilter === 'all') return all;
+    return all.filter((e) => (e.date || '').startsWith(yearFilter));
+  });
+
+  const statusCounts = $derived.by(() => {
+    let done = 0;
+    let processing = 0;
+    let waiting = 0;
+    let cancelled = 0;
+    for (const ev of scopedEvents) {
+      const st = getDisplayStatus(ev, today);
+      if (st === 'Done') done++;
+      else if (st === 'Processing') processing++;
+      else if (st === 'Waiting') waiting++;
+      else cancelled++;
     }
-    return msgs.join(' ');
+    return { done, processing, waiting, cancelled };
   });
 
-  const filteredEvents = $derived.by(() => {
-    if (!dash) return [] as ProjectSummary[];
-    const evs = dash.events.slice().sort((a, b) => a.date.localeCompare(b.date));
-    return statusFilter === 'all' ? evs : evs.filter((e) => e.status === statusFilter);
+  const deptCount = $derived.by(() => {
+    if (!dash) return 0;
+    const majors = new Set(dash.members.map((m) => m.major || m.department).filter(Boolean));
+    return majors.size || Object.keys(dash.membersByDepartment).length;
   });
 
-  const attEvents = $derived(filteredEvents.filter((e) => e.records > 0));
-
-  const displayedAttEvents = $derived.by(() => {
-    if (showAllAttendance) return attEvents;
-    return attEvents.slice(-6);
+  const budgetStats = $derived.by(() => {
+    const planned =
+      yearFilter === 'all'
+        ? (dash?.metrics.budgetPlanned ?? 0)
+        : scopedEvents.reduce((s, e) => s + e.budget_planned, 0);
+    const actual =
+      yearFilter === 'all'
+        ? (dash?.metrics.budgetActual ?? 0)
+        : scopedEvents.reduce((s, e) => s + e.actual, 0);
+    const pctNum = planned > 0 ? Math.round((actual / planned) * 100) : 0;
+    const remaining = Math.max(0, planned - actual);
+    return { planned, actual, pctNum, remaining };
   });
 
-  const clubAvgAttendance = $derived.by(() => {
-    if (!attEvents.length) return 0;
-    const sum = attEvents.reduce((s, e) => s + e.attendees, 0);
-    return Math.round(sum / attEvents.length);
+  const budgetChartEvents = $derived.by(() => {
+    const done = scopedEvents
+      .filter((e) => getDisplayStatus(e, today) === 'Done')
+      .sort((a, b) => a.event_id.localeCompare(b.event_id));
+    const pool = done.length ? done : scopedEvents.slice().sort((a, b) => a.event_id.localeCompare(b.event_id));
+    return pool.slice(0, 10);
   });
 
-  const attChartMax = $derived.by(() => {
-    const maxAtt = Math.max(clubAvgAttendance, ...displayedAttEvents.map((e) => e.attendees), 10);
-    return Math.ceil(maxAtt / 20) * 20;
+  const budgetChartMax = $derived.by(() => {
+    let maxV = 10000;
+    for (const e of budgetChartEvents) {
+      if (e.budget_planned > maxV) maxV = e.budget_planned;
+      if (e.actual > maxV) maxV = e.actual;
+    }
+    const step = maxV <= 25000 ? 5000 : 10000;
+    return Math.ceil((maxV * 1.08) / step) * step;
   });
 
-  const topBudgetCategories = $derived.by(() => {
-    if (!dash) return [] as Array<{ name: string; amount: number; sharePct: number; cls: string }>;
-    const classes = ['', 'gold', 'lilac-fill', 'sage', ''];
-    const total = Math.max(dash.metrics.budgetActual, 1);
-    return Object.entries(dash.budgetByCategory)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
-      .map(([name, amount], idx) => ({
-        name,
-        amount,
-        sharePct: Math.min(100, Math.round((amount / total) * 100)),
-        cls: classes[idx % classes.length]
-      }));
+  const budgetTicks = $derived.by(() => {
+    const out: number[] = [];
+    const steps = 5;
+    for (let i = steps; i >= 0; i--) {
+      out.push(Math.round((budgetChartMax / steps) * i));
+    }
+    return out;
   });
 
-  const upcomingEvents = $derived.by(() => {
-    if (!dash) return [] as ProjectSummary[];
-    const scheduled = dash.events
-      .filter((e) => e.status === 'Scheduled')
-      .sort((a, b) => a.date.localeCompare(b.date));
-    const future = scheduled.filter((e) => e.end_date >= dash.today);
-    return (future.length ? future : scheduled).slice(0, 4);
+  function formatK(n: number): string {
+    if (n === 0) return '0k';
+    if (n >= 1000) {
+      const k = n / 1000;
+      return `${Number.isInteger(k) ? k : k.toFixed(1)}k`;
+    }
+    return String(n);
+  }
+
+  function participantCount(ev: ProjectSummary): number {
+    return ev.stats.participants > 0 ? ev.stats.participants : ev.attendees;
+  }
+
+  function shortBarName(title: string): string {
+    return title
+      .replace(/^Peer Teaching:\s*/i, '')
+      .replace(/^Engineering\s+/i, '')
+      .replace(/\s+Engineering\s+/i, ' ');
+  }
+
+  const topParticipantEvents = $derived.by(() => {
+    const done = scopedEvents.filter((e) => getDisplayStatus(e, today) === 'Done');
+    const pool = done.length >= 6 ? done : scopedEvents;
+    return pool
+      .slice()
+      .sort((a, b) => participantCount(b) - participantCount(a) || a.event_id.localeCompare(b.event_id))
+      .slice(0, 6);
   });
 
-  const activeProjects = $derived.by(() => {
-    if (!dash) return [] as ProjectSummary[];
-    return dash.events
+  const topParticipantMax = $derived.by(() => {
+    return Math.max(1, ...topParticipantEvents.map((e) => participantCount(e)));
+  });
+
+  interface CalMilestone {
+    key: string;
+    event: ProjectSummary;
+    label: string;
+    status: DisplayStatus;
+  }
+
+  const milestonesByDate = $derived.by(() => {
+    const map: Record<string, CalMilestone[]> = {};
+    for (const ev of scopedEvents) {
+      const status = getDisplayStatus(ev, today);
+      if (ev.date) {
+        if (!map[ev.date]) map[ev.date] = [];
+        map[ev.date].push({
+          key: `${ev.event_id}-start`,
+          event: ev,
+          label: `${ev.event_id} starts`,
+          status
+        });
+      }
+      if (ev.end_date && ev.end_date !== ev.date) {
+        if (!map[ev.end_date]) map[ev.end_date] = [];
+        map[ev.end_date].push({
+          key: `${ev.event_id}-end`,
+          event: ev,
+          label: `${ev.event_id} ends`,
+          status
+        });
+      }
+    }
+    return map;
+  });
+
+  const monthCells = $derived.by(() => {
+    if (!calMonth) return [];
+    const emptyMap = {};
+    return buildMonthGrid(calMonth, today, null, emptyMap);
+  });
+
+  interface UpcomingMilestone {
+    event: ProjectSummary;
+    targetDate: string;
+    kind: 'starts' | 'ends';
+    daysDiff: number;
+    status: DisplayStatus;
+  }
+
+  function diffDaysIso(fromIso: string, toIso: string): number {
+    const a = Date.parse(`${fromIso}T00:00:00Z`);
+    const b = Date.parse(`${toIso}T00:00:00Z`);
+    return Math.round((b - a) / 86400000);
+  }
+
+  const upcomingList = $derived.by(() => {
+    const horizon = addDayStr(today, 30);
+    const items: UpcomingMilestone[] = [];
+    for (const ev of scopedEvents) {
+      const status = getDisplayStatus(ev, today);
+      if (status === 'Done' || status === 'Cancelled') continue;
+      if (ev.date >= today && ev.date <= horizon) {
+        items.push({
+          event: ev,
+          targetDate: ev.date,
+          kind: 'starts',
+          daysDiff: diffDaysIso(today, ev.date),
+          status
+        });
+      } else if (ev.date < today && ev.end_date >= today && ev.end_date <= horizon) {
+        items.push({
+          event: ev,
+          targetDate: ev.end_date,
+          kind: 'ends',
+          daysDiff: diffDaysIso(today, ev.end_date),
+          status
+        });
+      }
+    }
+    items.sort(
+      (a, b) =>
+        a.targetDate.localeCompare(b.targetDate) || a.event.event_id.localeCompare(b.event.event_id)
+    );
+    if (items.length > 0) return items.slice(0, 5);
+
+    return scopedEvents
       .filter((e) => e.status === 'Scheduled')
       .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(0, 4);
+      .slice(0, 4)
+      .map((ev) => ({
+        event: ev,
+        targetDate: ev.date >= today ? ev.date : ev.end_date,
+        kind: (ev.date >= today ? 'starts' : 'ends') as 'starts' | 'ends',
+        daysDiff: Math.max(0, diffDaysIso(today, ev.date >= today ? ev.date : ev.end_date)),
+        status: getDisplayStatus(ev, today)
+      }));
   });
-
-  const retentionPct = $derived.by(() => {
-    if (!dash || !dash.metrics.members) return 0;
-    return Math.round((dash.metrics.activeMembers / dash.metrics.members) * 100);
-  });
-
-  const budgetLeft = $derived.by(() => {
-    if (!dash) return 0;
-    return Math.max(0, dash.metrics.budgetPlanned - dash.metrics.budgetActual);
-  });
-
-  function shortTitle(title: string): string {
-    const clean = title.replace(/^Peer Teaching:\s*/i, '');
-    return clean.length > 14 ? `${clean.slice(0, 12)}…` : clean;
-  }
 
   function dateTile(dateStr: string): { day: string; month: string } {
     const p = dateStr.split('-');
@@ -139,465 +263,345 @@
     };
   }
 
-  const CATEGORY_ICON: Record<ProjectCategory, string> = {
-    Academic: '✳',
-    Social: '♡',
-    Community: '⌁',
-    Operations: '◧'
-  };
-
-  const CATEGORY_TONE_CLASS: Record<ProjectCategory, string> = {
-    Academic: 'yellow',
-    Social: 'pink',
-    Community: 'blue',
-    Operations: 'green'
-  };
-
-  const CATEGORY_PROG_CLASS: Record<ProjectCategory, string> = {
-    Academic: '',
-    Social: 'pink-progress',
-    Community: 'blue-progress',
-    Operations: 'green-progress'
-  };
-
-  function toggleSeries(which: 'planned' | 'actual') {
-    if (which === 'planned') {
-      if (!hidePlanned && hideActual) return;
-      hidePlanned = !hidePlanned;
-    } else {
-      if (!hideActual && hidePlanned) return;
-      hideActual = !hideActual;
-    }
+  function milestonePhrase(item: UpcomingMilestone): string {
+    const verb = item.kind === 'ends' ? 'Ends' : 'Starts';
+    if (item.daysDiff <= 0) return `${verb} today`;
+    if (item.daysDiff === 1) return `${verb} tomorrow`;
+    return `${verb} in ${item.daysDiff} days`;
   }
 
-  function exportReport() {
-    if (!dash) return;
-    const header = [
-      'event_id',
-      'title',
-      'category',
-      'lead',
-      'status',
-      'date',
-      'end_date',
-      'attendees',
-      'budget_planned',
-      'actual',
-      'pct'
-    ];
-    const rows = dash.events.map((e) => [
-      e.event_id,
-      e.title,
-      e.category,
-      e.lead.name,
-      e.status,
-      e.date,
-      e.end_date,
-      e.attendees,
-      e.budget_planned,
-      e.actual,
-      e.pct == null ? '' : `${Math.round(e.pct * 100)}%`
-    ]);
-    const csv = [header, ...rows]
-      .map((r) => r.map((x) => `"${String(x ?? '').replaceAll('"', '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `clubhouse-report-${dash.today || 'export'}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+  function statusTone(st: DisplayStatus): string {
+    if (st === 'Done') return 'done';
+    if (st === 'Processing') return 'processing';
+    if (st === 'Waiting') return 'waiting';
+    return 'cancelled';
   }
 </script>
 
-<section id="summary" class="page-content">
-  <div class="page-heading">
+<section id="summary" class="ac-page">
+  <div class="ac-page-head">
     <div>
-      <p class="eyebrow">
-        {eyebrowDate} <span class="heading-dot">&middot;</span> SEMESTER OVERVIEW
+      <h1>Summary</h1>
+      <p class="ac-page-sub">
+        Academic year {yearFilter === 'all' ? '2026' : yearFilter} &middot; Last Updated {lastUpdatedText}
+        {#if dash?.meta?.source === 'google'}
+          &middot; {dash.meta.sheetTitle || 'Google Sheets'}
+        {/if}
       </p>
-      <h1>Good afternoon, {firstName} <span class="wave" aria-hidden="true">&#10035;</span></h1>
-      <p class="subheading">Here's what's happening across your club.</p>
     </div>
 
-    <div class="heading-actions">
-      <button
-        type="button"
-        class="button button-light"
-        id="export-btn"
-        disabled={!dash}
-        onclick={exportReport}
-      >
-        <span aria-hidden="true">&#8615;</span> Export report
-      </button>
-      <button
-        type="button"
-        class="button button-primary"
-        id="refreshBtn"
-        disabled={refreshing}
-        onclick={onRefresh}
-      >
-        <span aria-hidden="true">&#8635;</span> {refreshing ? 'Syncing...' : 'Sync sheet'}
-      </button>
-    </div>
-  </div>
+    <div class="ac-head-controls">
+      <label class="ac-year-pill" aria-label="Filter by academic year">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M16 3v4M8 3v4M3 10h18" stroke-linecap="round" />
+        </svg>
+        <select bind:value={yearFilter}>
+          <option value="all">Academic year 2026</option>
+          <option value="2026">2026 events only</option>
+          <option value="2027">2027 events only</option>
+        </select>
+      </label>
 
-  <div class="main-tabs" role="tablist" aria-label="Dashboard sections">
-    <button
-      type="button"
-      class="main-tab selected"
-      role="tab"
-      aria-selected="true"
-      onclick={() => onSelectPage('summary')}
-    >
-      Summary
-    </button>
-    <button
-      type="button"
-      class="main-tab"
-      role="tab"
-      aria-selected="false"
-      onclick={() => onSelectPage('projects')}
-    >
-      Project data <span class="tab-badge">{dash?.events.length ?? 0}</span>
-    </button>
-  </div>
-
-  <div class="toolbar-row">
-    <div class="section-title">
-      <h2>Semester at a glance</h2>
-      <span class="live-tag"><i></i> Live overview</span>
-    </div>
-
-    <select
-      id="statusFilter"
-      class="period-select"
-      aria-label="Filter events by status"
-      bind:value={statusFilter}
-    >
-      <option value="all">All statuses</option>
-      <option value="Completed">Completed</option>
-      <option value="Scheduled">Scheduled</option>
-      <option value="Cancelled">Cancelled</option>
-    </select>
-  </div>
-
-  {#if bannerMsg}
-    <div id="dataBanner" class="banner banner-row" role="status">
-      <span>{bannerMsg}</span>
-      {#if isAdmin && onOpenSheetPicker}
-        <button type="button" class="btn small" onclick={onOpenSheetPicker}>
+      {#if isAdmin && dash?.meta?.source === 'mock' && onOpenSheetPicker}
+        <button type="button" class="ac-outline-btn" onclick={onOpenSheetPicker}>
           Connect Google Sheet
         </button>
       {/if}
+    </div>
+  </div>
+
+  {#if dash?.meta?.stale}
+    <div id="dataBanner" class="banner banner-row" role="status">
+      <span>Google Sheets could not be reached, so the last saved copy is shown.</span>
+      <button type="button" class="btn small" disabled={refreshing} onclick={onRefresh}>
+        Retry sync
+      </button>
     </div>
   {/if}
   {#if loadError}
     <p id="loadError" class="banner error" role="alert">{loadError} Showing the last data we have.</p>
   {/if}
 
-  <div class="stat-grid" id="metrics">
-    <article class="stat-card" id="mMembers">
-      <div class="stat-top">
-        <span class="stat-icon peach" aria-hidden="true">&#9817;</span>
-        <span class="stat-change positive">
-          {dash ? `${Object.keys(dash.membersByDepartment).length} depts` : '—'}
+  <!-- KPI Row -->
+  <div class="ac-kpi-grid" id="metrics">
+    <article class="ac-card ac-kpi-card" id="mMembers">
+      <div class="ac-kpi-top">
+        <span class="ac-kpi-label">Total Club Members</span>
+        <span class="ac-kpi-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="3.5" />
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a3.5 3.5 0 0 1 0 6.74" />
+          </svg>
         </span>
       </div>
-      <p>Active members</p>
-      <div class="stat-number">
-        {#if dash}
-          {dash.metrics.activeMembers} <small>/ {dash.metrics.members}</small>
-        {:else}
-          -
-        {/if}
-      </div>
-      <div class="mini-progress" aria-hidden="true">
-        <span style={`width:${retentionPct}%`}></span>
-      </div>
-      <small class="stat-foot">{dash ? `${retentionPct}% active member retention` : 'Loading...'}</small>
+      <div class="ac-kpi-value">{dash ? dash.metrics.members : '–'}</div>
+      <p class="ac-kpi-foot">
+        {dash ? `Across ${deptCount} engineering departments` : 'Loading...'}
+      </p>
     </article>
 
-    <article class="stat-card" id="mEvents">
-      <div class="stat-top">
-        <span class="stat-icon lilac" aria-hidden="true">&#9635;</span>
-        <span class="stat-change positive">
-          {dash ? `${dash.metrics.eventsByStatus.Scheduled || 0} scheduled` : '—'}
+    <article class="ac-card ac-kpi-card" id="mEvents">
+      <div class="ac-kpi-top">
+        <span class="ac-kpi-label">Activities</span>
+        <span class="ac-kpi-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <path d="M5 21V4" stroke-linecap="round" />
+            <path d="M5 4h11l-1.5 4L16 12H5" stroke-linejoin="round" />
+          </svg>
         </span>
       </div>
-      <p>Events held</p>
-      <div class="stat-number">{dash ? dash.metrics.events.toLocaleString('en-US') : '-'}</div>
-      <div class="event-dots" aria-hidden="true">
-        {#each Array(Math.min(7, dash?.metrics.events ?? 0)) as _}
-          <i></i>
-        {/each}
-        {#if (dash?.metrics.events ?? 0) > 7}
-          <span>+ {(dash?.metrics.events ?? 0) - 7} more</span>
-        {/if}
+      <div class="ac-kpi-value">{dash ? scopedEvents.length : '–'}</div>
+      <div class="ac-kpi-statuses">
+        <span class="ac-st-inline done">{statusCounts.done} Done</span>
+        <span class="ac-st-inline processing">{statusCounts.processing} Processing</span>
+        <span class="ac-st-inline waiting">{statusCounts.waiting} Waiting</span>
       </div>
-      <small class="stat-foot">
-        {#if dash}
-          {dash.metrics.eventsByStatus.Completed || 0} completed &middot;
-          {dash.metrics.eventsByStatus.Scheduled || 0} scheduled &middot;
-          {dash.metrics.eventsByStatus.Cancelled || 0} cancelled
-        {:else}
-          Loading...
-        {/if}
-      </small>
     </article>
 
-    <article class="stat-card budget-stat" id="mBudget">
-      <div class="stat-top">
-        <span class="stat-icon green" aria-hidden="true">&#3647;</span>
-        <span class="stat-change neutral">{dash ? `${pct(dash.metrics.budgetPct)} used` : '—'}</span>
+    <article class="ac-card ac-kpi-card" id="mBudget">
+      <div class="ac-kpi-top">
+        <span class="ac-kpi-label">Budget (planned)</span>
+        <span class="ac-kpi-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+            <rect x="3" y="6" width="18" height="13" rx="2" />
+            <path d="M3 10h18" />
+            <path d="M16 14h2" stroke-linecap="round" />
+          </svg>
+        </span>
       </div>
-      <p>Budget used</p>
-      <div class="stat-number">{dash ? baht(dash.metrics.budgetActual) : '-'}</div>
-      <div class="budget-progress" aria-hidden="true">
-        <span
-          style={`width:${dash ? Math.min(100, Math.round((dash.metrics.budgetPct || 0) * 100)) : 0}%`}
-        ></span>
+      <div class="ac-kpi-value">{dash ? baht(budgetStats.planned) : '–'}</div>
+      <div class="ac-kpi-bar" aria-hidden="true">
+        <span style={`width:${Math.min(100, budgetStats.pctNum)}%`}></span>
       </div>
-      <small class="stat-foot">
-        {#if dash}
-          <span>of {baht(dash.metrics.budgetPlanned)} planned</span>
-          <b>{baht(budgetLeft)} left</b>
-        {:else}
-          <span>Loading...</span>
-        {/if}
-      </small>
+      <div class="ac-kpi-split-foot">
+        <span>{dash ? `${baht(budgetStats.actual)} spent (${budgetStats.pctNum}%)` : 'Loading...'}</span>
+        <span>{dash ? `${baht(budgetStats.remaining)} remaining` : ''}</span>
+      </div>
     </article>
   </div>
 
-  <div class="dashboard-grid">
-    <article class="panel attendance-panel">
-      <div class="panel-heading">
+  <!-- Middle Analytics Row -->
+  <div class="ac-mid-grid">
+    <article class="ac-card ac-chart-card">
+      <div class="ac-card-head">
         <div>
-          <h3>Event attendance</h3>
-          <p>Member participation across events (click a bar to open project)</p>
+          <h2>Budget: planned vs actual</h2>
+          <p class="ac-card-sub">
+            Done projects: {budgetChartEvents[0]?.event_id ?? 'AC-001'} to {budgetChartEvents.at(-1)?.event_id ?? 'AC-010'} (THB)
+          </p>
+        </div>
+        <div class="ac-legend">
+          <span><i class="ac-dot planned"></i>Planned</span>
+          <span><i class="ac-dot actual"></i>Actual</span>
+        </div>
+      </div>
+
+      <div class="ac-vchart-wrap">
+        <div class="ac-vchart-y" aria-hidden="true">
+          {#each budgetTicks as tk}
+            <span>{formatK(tk)}</span>
+          {/each}
+        </div>
+        <div class="ac-vchart-plot">
+          <div class="ac-vchart-canvas">
+            <div class="ac-vchart-gridlines" aria-hidden="true">
+              {#each budgetTicks as _}
+                <span></span>
+              {/each}
+            </div>
+            <div class="ac-vchart-bars">
+              {#each budgetChartEvents as ev, i (ev.event_id)}
+                {@const hp = Math.min(100, Math.round((ev.budget_planned / budgetChartMax) * 100))}
+                {@const ha = Math.min(100, Math.round((ev.actual / budgetChartMax) * 100))}
+                <button
+                  type="button"
+                  class="ac-bar-group"
+                  class:edge-left={i <= 1}
+                  class:edge-right={i >= budgetChartEvents.length - 2}
+                  aria-label={`${ev.event_id} ${ev.title}: Planned ${baht(ev.budget_planned)}, Actual ${baht(ev.actual)}`}
+                  onmouseenter={() => (hoveredBudgetIdx = i)}
+                  onmouseleave={() => (hoveredBudgetIdx = null)}
+                  onfocus={() => (hoveredBudgetIdx = i)}
+                  onblur={() => (hoveredBudgetIdx = null)}
+                  onclick={() => onOpenProject(ev.event_id)}
+                >
+                  <div class="ac-bar-pair">
+                    <span class="ac-bar planned" style={`height:${Math.max(2, hp)}%`}></span>
+                    <span class="ac-bar actual" style={`height:${Math.max(2, ha)}%`}></span>
+                  </div>
+                  <small>{ev.event_id}</small>
+
+                  {#if hoveredBudgetIdx === i}
+                    <div class="ac-bar-tooltip">
+                      <strong>{ev.event_id} &middot; {ev.title}</strong>
+                      <span>Planned: {baht(ev.budget_planned)}</span>
+                      <span>Actual: {baht(ev.actual)}</span>
+                    </div>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="ac-card ac-chart-card">
+      <div class="ac-card-head">
+        <div>
+          <h2>Participants per activity</h2>
+          <p class="ac-card-sub">
+            Top {topParticipantEvents.length} of {scopedEvents.length} activities
+          </p>
+        </div>
+      </div>
+
+      <div class="ac-hbar-list">
+        {#each topParticipantEvents as ev (ev.event_id)}
+          {@const count = participantCount(ev)}
+          {@const widthPct = Math.max(4, Math.round((count / topParticipantMax) * 100))}
+          <button
+            type="button"
+            class="ac-hbar-row"
+            title={`${ev.event_id} ${ev.title}: ${count} participants`}
+            onclick={() => onOpenProject(ev.event_id)}
+          >
+            <span class="ac-hbar-label">{shortBarName(ev.title)}</span>
+            <span class="ac-hbar-track">
+              <span class="ac-hbar-fill" style={`width:${widthPct}%`}></span>
+              <span class="ac-hbar-num">{count}</span>
+            </span>
+          </button>
+        {/each}
+      </div>
+    </article>
+  </div>
+
+  <!-- Bottom Schedule Row -->
+  <div class="ac-bot-grid">
+    <article class="ac-card ac-cal-card">
+      <div class="ac-card-head ac-cal-card-head">
+        <div class="ac-cal-title-nav">
+          <h2>Events calendar</h2>
+          <div class="ac-month-stepper">
+            <button
+              type="button"
+              aria-label="Previous month"
+              onclick={() => (calMonth = shiftMonthStr(calMonth, -1))}
+            >
+              &#8249;
+            </button>
+            <span>{getMonthTitle(calMonth)}</span>
+            <button
+              type="button"
+              aria-label="Next month"
+              onclick={() => (calMonth = shiftMonthStr(calMonth, 1))}
+            >
+              &#8250;
+            </button>
+          </div>
+        </div>
+
+        <div class="ac-cal-status-legend">
+          <span><i class="ac-dot done"></i>Done</span>
+          <span><i class="ac-dot processing"></i>Processing</span>
+          <span><i class="ac-dot waiting"></i>Waiting</span>
+        </div>
+      </div>
+
+      <div class="ac-mini-cal-scroll">
+        <div class="ac-mini-cal">
+          <div class="ac-mini-cal-dow">
+            {#each DOW_LABELS as d}
+              <span>{d}</span>
+            {/each}
+          </div>
+          <div class="ac-mini-cal-grid">
+            {#each monthCells as cell (cell.key)}
+              {@const milestones = milestonesByDate[cell.key] ?? []}
+              <div class="ac-mini-cell" class:other={cell.other} class:today={cell.today}>
+                <span class="ac-mini-day" class:is-today={cell.today}>{cell.dayNum}</span>
+                {#if milestones.length}
+                  <div class="ac-mini-pills">
+                    {#each milestones.slice(0, 2) as m (m.key)}
+                      <button
+                        type="button"
+                        class={`ac-cal-pill ${statusTone(m.status)}`}
+                        title={`${m.event.title} (${m.label})`}
+                        onclick={() => onOpenProject(m.event.event_id)}
+                      >
+                        {m.label}
+                      </button>
+                    {/each}
+                    {#if milestones.length > 2}
+                      <button
+                        type="button"
+                        class="ac-cal-more"
+                        onclick={() => onSelectPage('calendar')}
+                      >
+                        +{milestones.length - 2} more
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="ac-card ac-upcoming-card">
+      <div class="ac-card-head">
+        <div>
+          <h2>Upcoming events</h2>
+          <p class="ac-card-sub">next 30 days</p>
         </div>
         <button
           type="button"
-          class="chart-period"
-          onclick={() => (showAllAttendance = !showAllAttendance)}
+          class="ac-notify-link"
+          onclick={() => {
+            if (onNotifyMe) onNotifyMe();
+            else onSelectPage('calendar');
+          }}
         >
-          {showAllAttendance ? `All ${attEvents.length} events` : 'Recent 6 events'} &#8964;
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke-linejoin="round" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-linecap="round" />
+          </svg>
+          Notify me
         </button>
       </div>
 
-      <div class="chart-legend">
-        <span><i class="legend-dot"></i> Attendees</span>
-        <span><i class="legend-dot pale"></i> Club average ({clubAvgAttendance})</span>
-      </div>
-
-      <div class="bar-chart" aria-label="Attendance chart">
-        <div class="y-labels" aria-hidden="true">
-          <span>{attChartMax}</span>
-          <span>{Math.round(attChartMax * 0.66)}</span>
-          <span>{Math.round(attChartMax * 0.33)}</span>
-          <span>0</span>
-        </div>
-        <div class="bars-area">
-          <div class="gridline one"></div>
-          <div class="gridline two"></div>
-          <div class="gridline three"></div>
-          {#if !displayedAttEvents.length}
-            <p class="muted" style="margin:auto">No attendance records for this filter.</p>
-          {:else}
-            {#each displayedAttEvents as ev (ev.event_id)}
-              {@const hAtt = Math.min(100, Math.round((ev.attendees / attChartMax) * 100))}
-              {@const hAvg = Math.min(100, Math.round((clubAvgAttendance / attChartMax) * 100))}
-              <button
-                type="button"
-                class="bar-pair"
-                title={`${ev.title}: ${ev.attendees} attendees (Club avg: ${clubAvgAttendance})`}
-                onclick={() => onOpenProject(ev.event_id)}
-              >
-                <i style={`height:${Math.max(4, hAtt)}%`}></i>
-                <i class="average" style={`height:${Math.max(4, hAvg)}%`}></i>
-                <small>{shortTitle(ev.title)}</small>
-              </button>
-            {/each}
-          {/if}
-        </div>
-      </div>
-
-      <details class="table-view">
-        <summary>View as table</summary>
-        <div id="attTable">
-          <table class="data-table">
-            <thead>
-              <tr><th>Event</th><th class="right">Attendees</th></tr>
-            </thead>
-            <tbody>
-              {#each attEvents as e (e.event_id)}
-                <tr>
-                  <td>{e.title}</td>
-                  <td class="num">{e.attendees}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </details>
-    </article>
-
-    <article class="panel budget-panel">
-      <div class="panel-heading">
-        <div>
-          <h3>Budget overview</h3>
-          <p>Spending by expense category vs. planned allocation</p>
-        </div>
-      </div>
-
-      <div class="budget-total">
-        <span>Spent so far</span>
-        <b>
-          {dash ? baht(dash.metrics.budgetActual) : '—'}
-          <small>/ {dash ? baht(dash.metrics.budgetPlanned) : '—'}</small>
-        </b>
-      </div>
-
-      <div class="budget-categories">
-        {#each topBudgetCategories as cat (cat.name)}
-          <div class="budget-row">
-            <div>
-              <span>{cat.name}</span>
-              <b>{baht(cat.amount)} <small>({cat.sharePct}%)</small></b>
-            </div>
-            <div class={`h-progress ${cat.cls}`}>
-              <i style={`width:${cat.sharePct}%`}></i>
-            </div>
-          </div>
-        {/each}
-      </div>
-
-      <div class="legend" id="budgetLegend">
-        <button type="button" aria-pressed={!hidePlanned} onclick={() => toggleSeries('planned')}>
-          <span class="sw planned"></span>Planned
-        </button>
-        <button type="button" aria-pressed={!hideActual} onclick={() => toggleSeries('actual')}>
-          <span class="sw actual"></span>Actual
-        </button>
-      </div>
-
-      <details class="table-view">
-        <summary>View project budgets table</summary>
-        <div id="budgetTable">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Event</th>
-                {#if !hidePlanned}<th class="right">Planned</th>{/if}
-                {#if !hideActual}<th class="right">Actual</th>{/if}
-                <th class="right">% used</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each filteredEvents as e (e.event_id)}
-                <tr>
-                  <td>{e.title}</td>
-                  {#if !hidePlanned}<td class="num">{baht(e.budget_planned)}</td>{/if}
-                  {#if !hideActual}<td class="num">{baht(e.actual)}</td>{/if}
-                  <td class="num">{pct(e.pct)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </details>
-
-      <button type="button" class="text-link" onclick={() => onSelectPage('budget')}>
-        View full budget <span aria-hidden="true">&rarr;</span>
-      </button>
-    </article>
-  </div>
-
-  <div class="bottom-grid">
-    <article class="panel events-panel">
-      <div class="panel-heading">
-        <div>
-          <h3>Upcoming events</h3>
-          <p>Don't miss what's next</p>
-        </div>
-        <button type="button" class="text-link" onclick={() => onSelectPage('calendar')}>
-          View calendar <span aria-hidden="true">&rarr;</span>
-        </button>
-      </div>
-
-      <div class="event-list">
-        {#if !upcomingEvents.length}
-          <p class="muted" style="margin-top:16px">No upcoming scheduled events.</p>
+      <div class="ac-upcoming-list">
+        {#if !upcomingList.length}
+          <p class="muted" style="padding:18px 0">No upcoming activities in the next 30 days.</p>
         {:else}
-          {#each upcomingEvents as ev, i (ev.event_id)}
-            {@const tile = dateTile(ev.date)}
-            {@const barTone = i % 3 === 1 ? 'mauve' : i % 3 === 2 ? 'sage-color' : ''}
-            {@const pillTone =
-              ev.category === 'Social'
-                ? 'pink-type'
-                : ev.category === 'Operations'
-                  ? 'green-type'
-                  : ev.category === 'Community'
-                    ? 'blue-type'
-                    : ''}
-            <button type="button" class="event-item" onclick={() => onOpenProject(ev.event_id)}>
-              <div class="date-tile">
-                <b>{tile.day}</b>
+          {#each upcomingList as item (item.event.event_id + item.kind)}
+            {@const tile = dateTile(item.targetDate)}
+            <button
+              type="button"
+              class="ac-upcoming-row"
+              onclick={() => onOpenProject(item.event.event_id)}
+            >
+              <div class="ac-up-tile">
                 <small>{tile.month}</small>
+                <b>{tile.day}</b>
               </div>
-              <span class={`event-color ${barTone}`}></span>
-              <div class="event-info">
-                <b>{ev.title}</b>
-                <small>{fmtRange(ev)} <i>&middot;</i> {ev.location || 'TBA'}</small>
+              <div class="ac-up-info">
+                <strong>{item.event.event_id} {item.event.title}</strong>
+                <span>
+                  {milestonePhrase(item)}
+                  <em class={`ac-up-st ${statusTone(item.status)}`}>{item.status}</em>
+                </span>
               </div>
-              <span class={`event-type ${pillTone}`}>{ev.category}</span>
             </button>
           {/each}
         {/if}
       </div>
     </article>
-
-    <article class="panel projects-mini">
-      <div class="panel-heading">
-        <div>
-          <h3>Active projects</h3>
-          <p>Latest progress &amp; budget updates</p>
-        </div>
-        <button type="button" class="text-link" onclick={() => onSelectPage('projects')}>
-          See all <span aria-hidden="true">&rarr;</span>
-        </button>
-      </div>
-
-      {#if !activeProjects.length}
-        <p class="muted" style="margin-top:16px">No active projects right now.</p>
-      {:else}
-        {#each activeProjects as proj (proj.event_id)}
-          {@const usedPct = proj.pct == null ? 0 : Math.min(100, Math.round(proj.pct * 100))}
-          <button type="button" class="project-mini-item" onclick={() => onOpenProject(proj.event_id)}>
-            <div class="project-mini-row">
-              <span class={`project-emoji ${CATEGORY_TONE_CLASS[proj.category]}`}>
-                {CATEGORY_ICON[proj.category]}
-              </span>
-              <div class="project-mini-info">
-                <b>{proj.title}</b>
-                <small>{proj.category} &middot; {fmtDate(proj.date)}</small>
-              </div>
-              <span class="project-percent">{usedPct}%</span>
-            </div>
-            <div class={`project-mini-progress ${CATEGORY_PROG_CLASS[proj.category]}`}>
-              <i style={`width:${usedPct}%`}></i>
-            </div>
-          </button>
-        {/each}
-      {/if}
-    </article>
   </div>
-
-  <footer class="page-footer">
-    <span><span class="footer-logo">&#9672;</span> Clubhouse <i>&middot;</i> Making club life simpler</span>
-    <span>
-      Data synced from {dash?.meta?.source === 'google' ? 'Google Sheets' : 'Mock-Data CSVs'}
-    </span>
-  </footer>
 </section>
