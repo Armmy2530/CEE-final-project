@@ -6046,7 +6046,7 @@ body {
   width: 100%;
   max-width: 1380px;
   margin: 0 auto;
-  padding: 28px 28px 64px;
+  padding: 28px 28px 32px;
   flex: 1;
 }
 
@@ -7855,7 +7855,7 @@ body {
 
 @media (max-width: 1080px) {
   .ac-main-wrap {
-    padding: 22px 20px 68px;
+    padding: 22px 20px 28px;
   }
   .ac-topbar-inner {
     padding: 0 20px;
@@ -7907,7 +7907,7 @@ body {
     gap: 5px;
   }
   .ac-main-wrap {
-    padding: 16px 12px calc(84px + env(safe-area-inset-bottom, 0px));
+    padding: 16px 12px calc(72px + env(safe-area-inset-bottom, 0px));
   }
   .ac-page-head {
     align-items: flex-start;
