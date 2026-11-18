@@ -215,37 +215,26 @@
       </div>
 
       <div class="ac-top-actions">
-        <div class="ac-theme-switch" role="group" aria-label="Color theme">
-          <button
-            type="button"
-            id={theme === 'dark' ? 'themeToggle' : undefined}
-            class="ac-theme-icon"
-            class:active={theme === 'light'}
-            aria-label="Switch to light mode"
-            aria-pressed={theme === 'light'}
-            title="Light mode"
-            onclick={() => onSetTheme('light')}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <button
+          type="button"
+          id="themeToggle"
+          class="ac-theme-btn"
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-pressed={theme === 'dark'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          onclick={() => onSetTheme(theme === 'dark' ? 'light' : 'dark')}
+        >
+          {#if theme === 'dark'}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
               <circle cx="12" cy="12" r="4" />
               <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round" />
             </svg>
-          </button>
-          <button
-            type="button"
-            id={theme === 'light' ? 'themeToggle' : undefined}
-            class="ac-theme-icon"
-            class:active={theme === 'dark'}
-            aria-label="Switch to dark mode"
-            aria-pressed={theme === 'dark'}
-            title="Dark mode"
-            onclick={() => onSetTheme('dark')}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" stroke-linejoin="round" />
             </svg>
-          </button>
-        </div>
+          {/if}
+        </button>
 
         <div class="menu-wrap">
           <button

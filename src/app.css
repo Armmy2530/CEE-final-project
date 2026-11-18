@@ -5960,39 +5960,7 @@ body {
   gap: 10px;
 }
 
-.ac-theme-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.ac-theme-icon {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--ac-muted);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-
-.ac-theme-icon:hover {
-  background: var(--ac-cream);
-  color: var(--ac-ink);
-}
-
-.ac-theme-icon.active {
-  color: var(--ac-ochre);
-}
-
-.ac-theme-icon svg,
-.ac-bell-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
+.ac-theme-btn,
 .ac-bell-btn {
   position: relative;
   width: 34px;
@@ -6006,6 +5974,13 @@ body {
   cursor: pointer;
 }
 
+.ac-theme-btn svg,
+.ac-bell-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ac-theme-btn:hover,
 .ac-bell-btn:hover {
   background: var(--ac-cream);
 }
