@@ -17,7 +17,7 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
 10. [Clubhouse AI Assistant (OpenRouter + Offline Fallback)](#10-clubhouse-ai-assistant-openrouter--offline-fallback)
 11. [Light / Dark Theme Persistence](#11-light--dark-theme-persistence)
 12. [Responsive Desktop, Vertical & Mobile Layout](#12-responsive-desktop-vertical--mobile-layout)
-13. [Hybrid SQLite + Supabase Persistence](#13-hybrid-sqlite--supabase-persistence)
+13. [Supabase-Primary Persistence with Strict 503 & SQLite Fallback](#13-supabase-primary-persistence-with-strict-503--sqlite-fallback)
 
 ---
 
@@ -84,14 +84,14 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
 
 ## 6. Authentication & Linked Google Sign-In
 
-- **What it is:** A 3-mode student ID authentication system (`Sign in`, `First time? Set password`, `Sign up`) plus optional **linked-only Google OAuth sign-in**.
-- **Key files:** [`src/lib/components/AuthView.svelte`](../src/lib/components/AuthView.svelte), [`src/routes/auth/callback/+page.svelte`](../src/routes/auth/callback/+page.svelte), [`src/routes/api/auth/*`](../src/routes/api/auth/login/+server.ts), [`src/lib/server/db.ts`](../src/lib/server/db.ts)
+- **What it is:** A streamlined 2-mode 10-digit student ID authentication system (`Sign in` and `Sign up`) with automatic member lookup plus optional **linked-only Google OAuth sign-in**.
+- **Key files:** [`src/lib/components/AuthView.svelte`](../src/lib/components/AuthView.svelte), [`src/lib/validation.ts`](../src/lib/validation.ts), [`src/routes/auth/callback/+page.svelte`](../src/routes/auth/callback/+page.svelte), [`src/routes/api/auth/*`](../src/routes/api/auth/login/+server.ts), [`src/lib/server/auth-crypto.ts`](../src/lib/server/auth-crypto.ts)
 - **How it works:**
-  1. **Password Security:** Passwords (minimum 8 chars) are hashed with `node:crypto` `scrypt` and a per-user 16-byte random salt.
+  1. **10-Digit ID & Password Security:** Member IDs are validated as 10-digit student IDs ([`validateStudentId`](../src/lib/validation.ts)). Passwords require 8+ characters with at least one uppercase letter, lowercase letter, and number ([`validatePassword`](../src/lib/validation.ts)), hashed with `node:crypto` `scrypt` and a per-user 16-byte random salt.
   2. **Session Cookies:** Successful login generates a 32-byte random token; only its `SHA-256` hash is stored in the `sessions` table, while the cookie is set as `HttpOnly`, `SameSite=Lax`, and `Secure` (automatically enabled on HTTPS or `x-forwarded-proto: https`).
-  3. **First-Time Password Setup (`/api/auth/setup`):** Pre-seeded student IDs (`6600000001`–`6600000067`) start without a password; users claim their seeded account by setting their initial password.
+  3. **Automatic Lookup in Sign up (`/api/auth/setup` & `/api/auth/register`):** Pre-seeded student IDs (`6600000001`–`6600000067`) are detected automatically when entered under **Sign up**: the UI locks full-name entry, displays the registered member name from the database, and submits to `/api/auth/setup`. New student IDs submit to `/api/auth/register`.
   4. **Linked-Only Google Sign-In (`/api/auth/google`):**
-     - When signed in as an **admin**, clicking **Link Google account** in the top-right account menu (`#userMenu`) stores a bidirectional mapping (`google_user_map:<email>` ↔ `user_google_email:<member_id>`) in `app_settings` (synced to Supabase) and can be unlinked anytime via `DELETE /api/auth/google`.
+     - When signed in as an **admin**, clicking **Link Google account** in the top-right account menu (`#userMenu`) stores a bidirectional mapping (`google_user_map:<email>` ↔ `user_google_email:<member_id>`) in `app_settings` (in the active store) and can be unlinked anytime via `DELETE /api/auth/google`.
      - Normal users see a streamlined `#userMenu` containing only their identity, current data source status, and **Sign out** (no **Sync data now** or **Link Google account** buttons).
      - When signed out, **Sign in with Google** redirects through Supabase Google OAuth to `/auth/callback` and resolves the linked `member_id`. Unlinked Google emails are rejected (`403`) rather than creating unauthorized accounts.
 
@@ -153,7 +153,7 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
 - **Key files:** [`src/app.html`](../src/app.html), [`src/hooks.server.ts`](../src/hooks.server.ts), [`src/routes/+layout.svelte`](../src/routes/+layout.svelte), [`src/routes/api/me/theme/+server.ts`](../src/routes/api/me/theme/+server.ts)
 - **How it works:**
   1. **Zero-Flash First Paint:** [`src/hooks.server.ts`](../src/hooks.server.ts) reads `locals.user.theme` (or the `theme` cookie) and injects `data-theme` into HTML during SSR alongside a CSP-nonced inline `<head>` script synced with `localStorage`.
-  2. **Per-Account Persistence:** Clicking `#themeToggle` updates the UI immediately, updates the cookie/`localStorage`, and persists the preference via `PATCH /api/me/theme` into both SQLite and Supabase.
+  2. **Per-Account Persistence:** Clicking `#themeToggle` updates the UI immediately, updates the cookie/`localStorage`, and persists the preference via `PATCH /api/me/theme` into the active database (`SupabaseStore` or local SQLite fallback).
   3. **Component Sync:** The selected theme also switches the `@svar-ui/svelte-calendar` wrapper between `<Willow>` (Light) and `<WillowDark>` (Dark).
 
 ---
@@ -168,11 +168,12 @@ This document describes every feature in **Clubhouse (`clubhouse.`)**: what it d
 
 ---
 
-## 13. Hybrid SQLite + Supabase Persistence
+## 13. Supabase-Primary Persistence with Strict 503 & SQLite Fallback
 
-- **What it is:** A dual-layer persistence engine pairing fast local SQLite (`data/app.db`) with remote Supabase PostgreSQL (`public-cee-v2`).
-- **Key files:** [`src/lib/server/runtime.ts`](../src/lib/server/runtime.ts), [`src/lib/server/db.ts`](../src/lib/server/db.ts), [`src/lib/server/supabase.ts`](../src/lib/server/supabase.ts), [`supabase/schema.sql`](../supabase/schema.sql)
+- **What it is:** A single-store persistence architecture using **Supabase PostgreSQL (`public-cee-v2`)** whenever configured and healthy at startup, with automatic startup fallback to **local SQLite (`data/app.db`)** when Supabase is unavailable or unconfigured (see [ADR-0012](./adr/0012-supabase-primary-strict-sqlite-fallback.md)).
+- **Key files:** [`src/lib/server/store.ts`](../src/lib/server/store.ts), [`src/lib/server/auth-crypto.ts`](../src/lib/server/auth-crypto.ts), [`src/lib/server/supabase.ts`](../src/lib/server/supabase.ts), [`src/lib/server/db.ts`](../src/lib/server/db.ts), [`src/lib/server/runtime.ts`](../src/lib/server/runtime.ts), [`src/hooks.server.ts`](../src/hooks.server.ts), [`supabase/schema.sql`](../supabase/schema.sql)
 - **How it works:**
-  1. **Dual-Runtime SQLite:** Automatically selects `bun:sqlite` under Bun or `node:sqlite` under Node.js (with automatic schema migration for legacy tables).
-  2. **Idempotent Seeding & Legacy Migration:** On startup, `ensureSeeded` seeds student IDs `6600000001`–`6600000067`, ensures `6600000001` has `admin` role, and migrates any legacy `MOCK-66-00XX` rows, sessions, and Google mappings to 10-digit IDs across both SQLite and Supabase.
-  3. **Write-Through & Startup Hydration:** Writes persist locally first and mirror asynchronously to Supabase `public-cee-v2`. When running on an ephemeral container (such as Render Free Tier), startup sync re-hydrates all users, sessions, and settings from Supabase so no data is lost across restarts.
+  1. **Startup Probe (`initStore`):** When Supabase credentials are present, the server probes `public-cee-v2` once on startup. If connected, all reads and writes run exclusively through `SupabaseStore`—local SQLite is never opened or written to.
+  2. **Strict When Selected (`503 StoreUnavailableError`):** Once `SupabaseStore` is selected at startup, mid-request Supabase network or `5xx` errors throw [`StoreUnavailableError`](../src/lib/server/store.ts) and [`src/hooks.server.ts`](../src/hooks.server.ts) returns HTTP `503` (never silently failing over to local SQLite).
+  3. **Local SQLite Startup Fallback:** When Supabase is `'disabled'`, `'schema_missing'` (`PGRST106`), or `'unreachable'` at startup (or in `:memory:` test runs), `initStore` lazily opens local SQLite (`bun:sqlite` under Bun or `node:sqlite` under Node.js) wrapped in `createSqliteStore`.
+  4. **Idempotent Seeding & Legacy Migration:** On startup, `ensureSeeded` seeds student IDs `6600000001`–`6600000067` directly into the active store, ensures `6600000001` has `admin` role, and migrates any legacy `MOCK-66-00XX` rows, sessions, and Google mappings to 10-digit IDs.
