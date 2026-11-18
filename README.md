@@ -1,4 +1,4 @@
-# Clubhouse (`clubhouse.`) — Club Activity Dashboard
+# Academic AC — Club Activity Dashboard
 
 Web dashboard for a student club committee built with **Bun + SvelteKit 2 (Svelte 5) + Supabase (`public-cee-v2`) / SQLite fallback + `@svar-ui/svelte-calendar` + Google Sheets / Drive + OpenRouter AI**. Reads a connected Google Sheet (or the built-in normalized `sample-sheets/` mock dataset) and provides executive summary analytics, an interactive multi-day SVAR Calendar, project/member/budget views, automatic budget and schedule alerts, Supabase-first persistence with local SQLite fallback, linked Google OAuth sign-in, Light/Dark themes, and a Markdown-rendered AI assistant.
 
