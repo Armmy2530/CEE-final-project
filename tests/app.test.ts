@@ -1271,6 +1271,7 @@ describe('Google Sheets dynamic selector and keyless gviz CSV export', () => {
       const u = new URL(String(url));
       expect(u.pathname).toContain('/spreadsheets/d/1PubSheet1234567/gviz/tq');
       expect(u.searchParams.get('tqx')).toBe('out:csv');
+      expect(u.searchParams.get('headers')).toBe('1');
       const sheet = u.searchParams.get('sheet') || '';
       return new Response(csvTabs[sheet] || '', {
         status: 200,

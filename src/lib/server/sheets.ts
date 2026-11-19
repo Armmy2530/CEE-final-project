@@ -403,7 +403,7 @@ export function createSource({
   async function fetchGoogleCsv(sheetId: string): Promise<SheetData> {
     const entries = await Promise.all(
       TABS.map(async (tab) => {
-        const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
+        const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}&headers=1`;
         const res = await fetchImpl(url, { signal: AbortSignal.timeout(10000) });
         if (!res.ok) {
           throw new Error(`Google Sheet CSV export responded ${res.status} for tab "${tab}"`);
